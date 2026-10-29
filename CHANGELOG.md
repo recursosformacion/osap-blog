@@ -1,5 +1,10 @@
 # Changelog — OSAP Blog
 
+## 1.0.3 — 2026-10-29
+
+- Sesión firmada del blog de 7 días, independiente de la caducidad del access token.
+- Los guardados usan la sesión del blog cuando existe.
+
 ## 1.0.2 — 2026-10-29
 
 - Imágenes pegadas desde el portapapeles se convierten en ficheros `/media/`.
@@ -23,4 +28,5 @@ Primera versión estable en producción.
 - Autenticación delegada en OSAP con entrada directa desde la SPA y retorno a la administración.
 - Migración prod→prod de los artículos generales de `amigos_articles`, incluidas portadas.
 - Licencia GPL-3.0.
+
 

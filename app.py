@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import base64
 import binascii
+import hashlib
+import hmac
+import json
 import logging
 import math
 import os
 import re
+import secrets
 import threading
 import time
 import unicodedata
@@ -43,7 +47,7 @@ from fastapi.templating import Jinja2Templates
 from pymysql.cursors import DictCursor
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 
 
 def _load_config() -> dict[str, Any]:
@@ -98,6 +102,12 @@ if not MEDIA_ROOT.is_absolute():
 MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 COOKIE = "osap_blog_token"
 REFRESH_COOKIE = "osap_blog_refresh"
+SESSION_COOKIE = "osap_blog_session"
+SESSION_SECRET = (
+    os.environ.get("OSAP_BLOG_SESSION_SECRET")
+    or CONFIG["server"].get("session_secret")
+    or secrets.token_hex(32)
+)
 LOGGER = logging.getLogger("osap-blog")
 MAX_UPLOAD = int(CONFIG["media"].get("max_bytes", 5 * 1024 * 1024))
 EDITOR_ROLES = list(CONFIG["editor"].get("roles", []))
@@ -350,6 +360,59 @@ def set_cookie(
         )
 
 
+def _session_payload(user: dict[str, Any]) -> str:
+    data = {
+        "user": {
+            "user_id": user.get("user_id"),
+            "roles": user.get("roles") or [],
+            "name": user.get("name"),
+            "email": user.get("email"),
+        },
+        "exp": int(time.time()) + 7 * 24 * 3600,
+    }
+    raw = base64.urlsafe_b64encode(
+        json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode()
+    ).rstrip(b"=")
+    signature = hmac.new(SESSION_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    return f"{raw.decode()}.{signature}"
+
+
+def session_user(request: Request) -> dict[str, Any] | None:
+    raw = request.cookies.get(SESSION_COOKIE, "")
+    if not raw or "." not in raw:
+        return None
+    payload, signature = raw.rsplit(".", 1)
+    expected = hmac.new(
+        SESSION_SECRET.encode(), payload.encode(), hashlib.sha256
+    ).hexdigest()
+    if not hmac.compare_digest(signature, expected):
+        return None
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict) or int(data.get("exp", 0)) < int(time.time()):
+        return None
+    user = data.get("user")
+    return user if isinstance(user, dict) and user.get("user_id") else None
+
+
+def set_session(response: Response, user: dict[str, Any]) -> None:
+    response.set_cookie(
+        SESSION_COOKIE,
+        _session_payload(user),
+        max_age=7 * 24 * 3600,
+        httponly=True,
+        secure=PUBLIC_URL.startswith("https://"),
+        samesite="lax",
+        path="/",
+    )
+
+
+def current_user(request: Request) -> dict[str, Any] | None:
+    return session_user(request) or public_user(token_for(request))
+
+
 @contextmanager
 def db() -> Iterator[pymysql.Connection]:
     conn = pymysql.connect(
@@ -393,15 +456,24 @@ async def renew_blog_session(request: Request, call_next):
     path = request.url.path
     if not (path == "/admin" or path.startswith(("/admin/", "/comments", "/auth/"))):
         return await call_next(request)
+    if session_user(request):
+        return await call_next(request)
     access = request.cookies.get(COOKIE, "")
     refresh = request.cookies.get(REFRESH_COOKIE, "")
     renewed: dict[str, Any] | None = None
-    if refresh and (not access or not public_user(access)):
+    renewed_user: dict[str, Any] | None = None
+    if access:
+        renewed_user = public_user(access)
+        if renewed_user:
+            request.state.blog_token = access
+    if refresh and not renewed_user:
         candidate = refresh_tokens(refresh)
-        if candidate and public_user(str(candidate["access_token"])):
-            renewed = candidate
-            request.state.blog_token = candidate["access_token"]
-            request.state.blog_refresh = candidate["refresh_token"]
+        if candidate:
+            renewed_user = public_user(str(candidate["access_token"]))
+            if renewed_user:
+                renewed = candidate
+                request.state.blog_token = candidate["access_token"]
+                request.state.blog_refresh = candidate["refresh_token"]
     response = await call_next(request)
     if renewed:
         set_cookie(
@@ -410,6 +482,8 @@ async def renew_blog_session(request: Request, call_next):
             str(renewed["access_token"]),
             str(renewed["refresh_token"]),
         )
+    if renewed_user:
+        set_session(response, renewed_user)
     return response
 
 
@@ -420,8 +494,7 @@ def render(
     status_code: int = 200,
     **context: Any,
 ) -> HTMLResponse:
-    token = token_for(request)
-    user = public_user(token)
+    user = current_user(request)
     base = {
         "request": request,
         "version": APP_VERSION,
@@ -661,7 +734,8 @@ def auth_session(
     next: str = "/admin",
 ) -> RedirectResponse:
     target = next if next.startswith("/") and not next.startswith("//") else "/admin"
-    if token and public_user(token):
+    user = public_user(token) if token else None
+    if token and user:
         response = RedirectResponse(target, status_code=303)
         set_cookie(
             response,
@@ -669,21 +743,25 @@ def auth_session(
             token,
             refresh_token or request.cookies.get(REFRESH_COOKIE, ""),
         )
+        set_session(response, user)
         return response
     candidate = refresh_tokens(
         refresh_token
         or request.cookies.get(REFRESH_COOKIE, "")
         or getattr(request.state, "blog_refresh", "")
     )
-    if candidate and public_user(str(candidate["access_token"])):
-        response = RedirectResponse(target, status_code=303)
-        set_cookie(
-            response,
-            request,
-            str(candidate["access_token"]),
-            str(candidate["refresh_token"]),
-        )
-        return response
+    if candidate:
+        user = public_user(str(candidate["access_token"]))
+        if user:
+            response = RedirectResponse(target, status_code=303)
+            set_cookie(
+                response,
+                request,
+                str(candidate["access_token"]),
+                str(candidate["refresh_token"]),
+            )
+            set_session(response, user)
+            return response
     if token:
         return RedirectResponse("/?session=error", status_code=303)
     return RedirectResponse("/login", status_code=303)
@@ -700,10 +778,11 @@ def login_page(request: Request, error: str = "") -> HTMLResponse:
 
 
 @app.get("/logout")
-def logout() -> RedirectResponse:
+def logout(request: Request) -> RedirectResponse:
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(COOKIE, path="/")
     response.delete_cookie(REFRESH_COOKIE, path="/")
+    response.delete_cookie(SESSION_COOKIE, path="/")
     return response
 
 
@@ -714,7 +793,7 @@ def create_comment(
     body: str = Form(...),
     slug: str = Form(""),
 ) -> RedirectResponse:
-    user = public_user(token_for(request))
+    user = current_user(request)
     if not user:
         return RedirectResponse("/", status_code=303)
     body = re.sub(r"\s+", " ", body).strip()[:4000]
@@ -743,7 +822,7 @@ def create_comment(
 
 @app.get("/admin", response_class=HTMLResponse)
 def admin(request: Request) -> HTMLResponse:
-    user = public_user(token_for(request))
+    user = current_user(request)
     if not can_edit(user):
         return render(request, "forbidden.html", status_code=403)
     with db() as conn, conn.cursor() as cur:
@@ -759,14 +838,14 @@ def admin(request: Request) -> HTMLResponse:
 
 @app.get("/admin/new", response_class=HTMLResponse)
 def new_article(request: Request) -> HTMLResponse:
-    if not can_edit(public_user(token_for(request))):
+    if not can_edit(current_user(request)):
         return render(request, "forbidden.html", status_code=403)
     return render(request, "edit.html", article=None, body_html="", editing=False)
 
 
 @app.get("/admin/{article_id}/edit", response_class=HTMLResponse)
 def edit_article(request: Request, article_id: str) -> HTMLResponse:
-    if not can_edit(public_user(token_for(request))):
+    if not can_edit(current_user(request)):
         return render(request, "forbidden.html", status_code=403)
     with db() as conn, conn.cursor() as cur:
         cur.execute("SELECT * FROM articles WHERE id=%s", (article_id,))
@@ -791,7 +870,7 @@ def save_article(
     cover_url: str,
     publish: bool,
 ) -> RedirectResponse:
-    user = public_user(token_for(request))
+    user = current_user(request)
     if not can_edit(user):
         return RedirectResponse("/login?error=session", status_code=303)
     title = title.strip()
@@ -889,7 +968,7 @@ def update_article(
 
 @app.get("/admin/media")
 def list_media(request: Request) -> JSONResponse:
-    user = public_user(token_for(request))
+    user = current_user(request)
     if not can_edit(user):
         return JSONResponse({"error": "No autorizado"}, status_code=403)
     with db() as conn, conn.cursor() as cur:
@@ -920,7 +999,7 @@ def list_media(request: Request) -> JSONResponse:
 def upload_media(
     request: Request, image: UploadFile = File(...)  # noqa: B008
 ) -> JSONResponse:
-    user = public_user(token_for(request))
+    user = current_user(request)
     if not can_edit(user):
         return JSONResponse({"error": "No autorizado"}, status_code=403)
     content_type = image.content_type or ""
@@ -961,12 +1040,15 @@ def media(media_id: str) -> FileResponse:
 
 @app.post("/admin/comments/{comment_id}/{decision}")
 def moderate_comment(request: Request, comment_id: str, decision: str) -> RedirectResponse:
-    if not can_edit(public_user(token_for(request))) or decision not in {"approved", "rejected"}:
+    if not can_edit(current_user(request)) or decision not in {"approved", "rejected"}:
         return RedirectResponse("/admin", status_code=303)
     with db() as conn, conn.cursor() as cur:
         cur.execute("UPDATE comments SET status=%s WHERE id=%s", (decision, comment_id))
         conn.commit()
     return RedirectResponse("/admin", status_code=303)
+
+
+
 
 
 
