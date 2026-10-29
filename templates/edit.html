@@ -14,8 +14,19 @@
       <input id="title" name="title" type="text" value="{{ article.title if article else '' }}" required>
       <label for="summary">Entradilla</label>
       <textarea id="summary" name="summary" rows="2">{{ article.summary if article and article.summary else '' }}</textarea>
-      <label for="cover_url">URL de portada</label>
-      <input id="cover_url" name="cover_url" type="text" value="{{ article.cover_url if article and article.cover_url else '' }}">
+      <label for="cover_url">Portada</label>
+      <div class="cover-picker">
+        <input id="cover_url" name="cover_url" type="text"
+               value="{{ article.cover_url if article and article.cover_url else '' }}"
+               placeholder="Sube una imagen o pega una URL">
+        <button class="btn secondary" type="button" id="cover-button">Subir imagen</button>
+        <input id="cover-input" type="file" accept="image/*" hidden>
+      </div>
+      <div id="cover-preview-wrap" class="cover-preview-wrap" {% if not (article and article.cover_url) %}hidden{% endif %}>
+        <img id="cover-preview" class="cover-preview"
+             src="{{ article.cover_url if article and article.cover_url else '' }}" alt="Portada">
+        <button class="btn danger" type="button" id="cover-clear">Quitar</button>
+      </div>
     </div>
 
     <div class="card editor-card">
@@ -31,7 +42,9 @@
         <button type="button" data-align="align-left" title="Imagen a la izquierda">◧</button>
         <button type="button" data-align="align-center" title="Imagen centrada">▣</button>
         <button type="button" data-align="align-right" title="Imagen a la derecha">◨</button>
-        <button type="button" id="image-button" title="Insertar imagen">Imagen</button>
+        <button type="button" id="image-button" title="Subir e insertar imagen">Imagen</button>
+        <button type="button" id="image-url-button" title="Insertar imagen desde URL">URL</button>
+        <button type="button" id="library-button" title="Reutilizar una imagen subida">Biblioteca</button>
         <input id="image-input" type="file" accept="image/*" hidden>
         <span id="editor-status" class="hint"></span>
       </div>
@@ -50,5 +63,12 @@
     {% endif %}
   </aside>
 </form>
+<dialog id="media-dialog" class="media-dialog">
+  <div class="media-dialog-head">
+    <strong>Biblioteca de imágenes</strong>
+    <button type="button" class="btn secondary" id="media-close">Cerrar</button>
+  </div>
+  <div id="media-grid" class="media-grid"><p class="hint">Cargando…</p></div>
+</dialog>
 <script src="{{ url_for('static', path='editor.js') }}?v={{ version }}"></script>
 {% endblock %}

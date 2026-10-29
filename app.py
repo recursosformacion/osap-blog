@@ -133,7 +133,8 @@ class BlogSanitizer(HTMLParser):
                 safe.extend([("href", href), ("rel", "nofollow noopener")])
         elif tag == "img":
             src = str(values.get("src") or "")
-            if not src.startswith("/media/"):
+            parsed_src = urlparse(src)
+            if not (src.startswith("/media/") or parsed_src.scheme in {"http", "https"}):
                 return
             safe.extend([("src", src), ("alt", str(values.get("alt") or "")), ("loading", "lazy")])
             for key in ("width", "height"):
@@ -712,6 +713,35 @@ def update_article(
     publish: str = Form("0"),
 ) -> RedirectResponse:
     return save_article(request, article_id, title, summary, body, cover_url, publish == "1")
+
+
+@app.get("/admin/media")
+def list_media(request: Request) -> JSONResponse:
+    user = public_user(token_for(request))
+    if not can_edit(user):
+        return JSONResponse({"error": "No autorizado"}, status_code=403)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, filename, content_type, created_at FROM media "
+            "WHERE content_type LIKE 'image/%' "
+            "AND (uploaded_by=%s OR uploaded_by='legacy') "
+            "ORDER BY created_at DESC LIMIT 100",
+            (str(user["user_id"]),),
+        )
+        rows = cur.fetchall()
+    return JSONResponse(
+        {
+            "items": [
+                {
+                    "id": row["id"],
+                    "name": row["filename"],
+                    "url": f"/media/{row['id']}",
+                    "created_at": row["created_at"].isoformat() if row["created_at"] else None,
+                }
+                for row in rows
+            ]
+        }
+    )
 
 
 @app.post("/admin/upload")

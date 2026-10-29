@@ -14,8 +14,10 @@ def test_sanitize_allows_editor_images_and_alignment() -> None:
     assert "figcaption" in clean
 
 
-def test_sanitize_rejects_external_image_sources() -> None:
-    assert "<img" not in sanitize_html('<img src="https://example.org/x.png" alt="x">')
+def test_sanitize_allows_http_images_but_rejects_active_sources() -> None:
+    assert "<img" in sanitize_html('<img src="https://example.org/x.png" alt="x">')
+    assert "<img" not in sanitize_html('<img src="javascript:alert(1)" alt="x">')
+    assert "<img" not in sanitize_html('<img src="//example.org/x.png" alt="x">')
 
 
 def test_slugify() -> None:

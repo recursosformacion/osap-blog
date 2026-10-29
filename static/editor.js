@@ -7,11 +7,48 @@
   const status = document.getElementById("editor-status");
   if (!editor || !form || !hidden) return;
 
+  const coverInput = document.getElementById("cover_url");
+  const coverFile = document.getElementById("cover-input");
+  const coverButton = document.getElementById("cover-button");
+  const coverClear = document.getElementById("cover-clear");
+  const coverPreview = document.getElementById("cover-preview");
+  const coverPreviewWrap = document.getElementById("cover-preview-wrap");
+  const mediaDialog = document.getElementById("media-dialog");
+  const mediaGrid = document.getElementById("media-grid");
+  const mediaClose = document.getElementById("media-close");
+
   const sync = () => { hidden.value = editor.innerHTML; };
   const announce = (text) => {
     if (!status) return;
     status.textContent = text;
-    window.setTimeout(() => { status.textContent = ""; }, 2500);
+    window.setTimeout(() => { status.textContent = ""; }, 3000);
+  };
+
+  const insertImage = (url, alt) => {
+    const figure = document.createElement("figure");
+    figure.className = "align-center";
+    const img = document.createElement("img");
+    img.src = url;
+    img.alt = alt || "Imagen";
+    figure.appendChild(img);
+    editor.focus();
+    document.execCommand("insertHTML", false, figure.outerHTML);
+    sync();
+  };
+
+  const uploadImage = async (file) => {
+    const data = new FormData();
+    data.append("image", file);
+    const response = await fetch("/admin/upload", { method: "POST", body: data });
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Error al subir");
+    return payload;
+  };
+
+  const showCover = (url) => {
+    if (!coverPreview || !coverPreviewWrap) return;
+    coverPreview.src = url || "";
+    coverPreviewWrap.hidden = !url;
   };
 
   form.addEventListener("submit", sync);
@@ -68,26 +105,94 @@
       const file = imageInput.files && imageInput.files[0];
       imageInput.value = "";
       if (!file) return;
-      const data = new FormData();
-      data.append("image", file);
       announce("Subiendo imagen…");
       try {
-        const response = await fetch("/admin/upload", { method: "POST", body: data });
-        const payload = await response.json();
-        if (!response.ok) throw new Error(payload.error || "Error al subir");
-        const figure = document.createElement("figure");
-        figure.className = "align-center";
-        const img = document.createElement("img");
-        img.src = payload.url;
-        img.alt = file.name.replace(/\.[^.]+$/, "");
-        figure.appendChild(img);
-        editor.focus();
-        document.execCommand("insertHTML", false, figure.outerHTML);
-        sync();
+        const payload = await uploadImage(file);
+        insertImage(payload.url, file.name.replace(/\.[^.]+$/, ""));
         announce("Imagen insertada");
       } catch (error) {
         announce(error.message || "No se pudo subir la imagen");
       }
     });
   }
+
+  const urlButton = document.getElementById("image-url-button");
+  if (urlButton) {
+    urlButton.addEventListener("click", () => {
+      const url = window.prompt("URL de la imagen (https://… o /media/…)", "https://");
+      if (!url) return;
+      if (!url.startsWith("/media/") && !url.startsWith("https://") && !url.startsWith("http://")) {
+        announce("Usa una URL http(s) o /media/");
+        return;
+      }
+      insertImage(url, "Imagen");
+      sync();
+    });
+  }
+
+  if (coverButton && coverFile && coverInput) {
+    coverButton.addEventListener("click", () => coverFile.click());
+    coverFile.addEventListener("change", async () => {
+      const file = coverFile.files && coverFile.files[0];
+      coverFile.value = "";
+      if (!file) return;
+      announce("Subiendo portada…");
+      try {
+        const payload = await uploadImage(file);
+        coverInput.value = payload.url;
+        showCover(payload.url);
+        announce("Portada subida");
+      } catch (error) {
+        announce(error.message || "No se pudo subir la portada");
+      }
+    });
+    coverInput.addEventListener("input", () => showCover(coverInput.value.trim()));
+  }
+  if (coverClear && coverInput) {
+    coverClear.addEventListener("click", () => {
+      coverInput.value = "";
+      showCover("");
+    });
+  }
+
+  const closeMedia = () => {
+    if (mediaDialog && mediaDialog.open) mediaDialog.close();
+  };
+  if (mediaClose) mediaClose.addEventListener("click", closeMedia);
+
+  const openLibrary = async () => {
+    if (!mediaDialog || !mediaGrid) return;
+    mediaGrid.innerHTML = '<p class="hint">Cargando…</p>';
+    mediaDialog.showModal();
+    try {
+      const response = await fetch("/admin/media", { headers: { Accept: "application/json" } });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "No se pudo cargar");
+      if (!payload.items || payload.items.length === 0) {
+        mediaGrid.innerHTML = '<p class="hint">Todavía no has subido imágenes.</p>';
+        return;
+      }
+      mediaGrid.innerHTML = "";
+      payload.items.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "media-item";
+        button.title = item.name || "Imagen";
+        const img = document.createElement("img");
+        img.src = item.url;
+        img.alt = item.name || "Imagen";
+        img.loading = "lazy";
+        button.appendChild(img);
+        button.addEventListener("click", () => {
+          insertImage(item.url, item.name || "Imagen");
+          closeMedia();
+        });
+        mediaGrid.appendChild(button);
+      });
+    } catch (error) {
+      mediaGrid.innerHTML = `<p class="hint">${error.message || "No se pudo cargar la biblioteca"}</p>`;
+    }
+  };
+  const libraryButton = document.getElementById("library-button");
+  if (libraryButton) libraryButton.addEventListener("click", openLibrary);
 })();
