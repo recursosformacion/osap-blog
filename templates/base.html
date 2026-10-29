@@ -54,6 +54,11 @@
       </span>
     </header>
     <div class="content">
+      {% if session_error %}
+      <div class="notice error">
+        La sesión de OSAP no se pudo transferir. Pulsa <a href="{{ login_url }}">Entrar con OSAP</a> para reintentarlo.
+      </div>
+      {% endif %}
       {% block content %}{% endblock %}
     </div>
   </main>

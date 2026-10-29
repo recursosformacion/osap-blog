@@ -299,6 +299,7 @@ def render(
         "canonical": f"{PUBLIC_URL}{request.url.path}",
         "feed_url": f"{PUBLIC_URL}/feed",
         "login_url": f"{OSAP_URL}/?auth=login&return_to=blog",
+        "session_error": request.query_params.get("session") == "error",
     }
     base.update(context)
     return templates.TemplateResponse(request, template, base, status_code=status_code)
@@ -524,7 +525,7 @@ def auth_session(request: Request, token: str = "", next: str = "/admin") -> Red
         set_cookie(response, request, token)
         return response
     if token:
-        return RedirectResponse("/login?error=invalid", status_code=303)
+        return RedirectResponse("/?session=error", status_code=303)
     return RedirectResponse("/login", status_code=303)
 
 
