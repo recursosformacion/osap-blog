@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Archivo · {{ site_name }}{% endblock %}
+{% block og_title %}Archivo · {{ site_name }}{% endblock %}
+{% block crumbs %} / Archivo{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">OpenMusicRepository</p>
+    <h1>Archivo</h1>
+    <p class="lede">Todos los artículos publicados, agrupados por mes.</p>
+  </div>
+</section>
+<section class="card">
+  {% if months %}
+  <ul class="archive-list">
+    {% for m in months %}
+      <li>
+        <a href="/?month={{ m.year }}-{{ '%02d'|format(m.month) }}">{{ '%02d'|format(m.month) }}/{{ m.year }}</a>
+        <span>{{ m.total }} artículo{% if m.total != 1 %}s{% endif %}</span>
+      </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+    <p class="hint">Todavía no hay artículos publicados.</p>
+  {% endif %}
+</section>
+{% endblock %}

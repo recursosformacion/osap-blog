@@ -6,13 +6,15 @@ autenticación en OSAP Auth. No comparte tablas con osap-api.
 
 from __future__ import annotations
 
+import math
 import os
 import re
 import unicodedata
 import uuid
 from collections.abc import Iterator
 from contextlib import asynccontextmanager, contextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from email.utils import format_datetime
 from html import escape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -23,13 +25,20 @@ import httpx
 import pymysql
 import yaml
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+    Response,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pymysql.cursors import DictCursor
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "0.1.0"
+APP_VERSION = "1.0.0"
 
 
 def _load_config() -> dict[str, Any]:
@@ -43,6 +52,12 @@ def _load_config() -> dict[str, Any]:
     data.setdefault("osap", {})
     data.setdefault("media", {})
     data.setdefault("editor", {})
+    data["server"].setdefault("site_name", "Blog OSAP")
+    data["server"].setdefault(
+        "site_description",
+        "Historias, análisis y novedades sobre el repertorio y la comunidad de OSAP.",
+    )
+    data["server"].setdefault("page_size", 9)
     data["db"]["password"] = os.environ.get(
         "OSAP_BLOG_DB_PASSWORD", data["db"].get("password", "")
     )
@@ -66,6 +81,12 @@ DB = CONFIG["db"]
 AUTH_BASE = CONFIG["auth"]["base_url"]
 PUBLIC_URL = CONFIG["server"]["public_url"]
 OSAP_URL = CONFIG["osap"]["public_url"]
+SITE_NAME = str(CONFIG["server"]["site_name"])
+SITE_DESCRIPTION = str(CONFIG["server"]["site_description"])
+try:
+    PAGE_SIZE = max(1, min(50, int(CONFIG["server"]["page_size"])))
+except (TypeError, ValueError):
+    PAGE_SIZE = 9
 MEDIA_ROOT = Path(CONFIG["media"]["root"])
 if not MEDIA_ROOT.is_absolute():
     MEDIA_ROOT = BASE_DIR / MEDIA_ROOT
@@ -170,7 +191,7 @@ def unique_slug(title: str) -> str:
 
 
 def utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 def public_user(token: str) -> dict[str, Any] | None:
@@ -273,9 +294,24 @@ def render(
         "can_edit": can_edit(user),
         "osap_url": OSAP_URL,
         "public_url": PUBLIC_URL,
+        "site_name": SITE_NAME,
+        "site_description": SITE_DESCRIPTION,
+        "canonical": f"{PUBLIC_URL}{request.url.path}",
+        "feed_url": f"{PUBLIC_URL}/feed",
+        "login_url": f"{OSAP_URL}/?auth=login&return_to=blog",
     }
     base.update(context)
     return templates.TemplateResponse(request, template, base, status_code=status_code)
+
+
+def rss_date(value: datetime | None) -> str:
+    stamp = value or datetime.now(UTC).replace(tzinfo=None)
+    return format_datetime(stamp.replace(tzinfo=UTC))
+
+
+def reading_minutes(body_html: str) -> int:
+    words = len(re.sub(r"<[^>]+>", " ", body_html).split())
+    return max(1, round(words / 220))
 
 
 @app.get("/health")
@@ -287,14 +323,152 @@ def health() -> dict[str, str]:
 
 
 @app.get("/", response_class=HTMLResponse)
-def home(request: Request) -> HTMLResponse:
+def home(request: Request, page: int = 1, q: str = "", month: str = "") -> HTMLResponse:
+    query = q.strip()[:120]
+    page = max(1, page)
+    where = "status='published'"
+    params: list[Any] = []
+    if query:
+        where += " AND (title LIKE %s OR summary LIKE %s OR body_html LIKE %s)"
+        params.extend([f"%{query}%"] * 3)
+    month_label = ""
+    if re.fullmatch(r"\d{4}-\d{2}", month):
+        year, month_number = month.split("-")
+        where += " AND YEAR(published_at)=%s AND MONTH(published_at)=%s"
+        params.extend([int(year), int(month_number)])
+        month_label = f"{month_number}/{year}"
     with db() as conn, conn.cursor() as cur:
+        cur.execute(f"SELECT COUNT(*) AS total FROM articles WHERE {where}", params)
+        total = int(cur.fetchone()["total"])
+        total_pages = max(1, math.ceil(total / PAGE_SIZE))
+        page = min(page, total_pages)
+        offset = (page - 1) * PAGE_SIZE
         cur.execute(
-            "SELECT id, slug, title, summary, cover_url, published_at "
-            "FROM articles WHERE status='published' ORDER BY published_at DESC, created_at DESC"
+            "SELECT id, slug, title, summary, cover_url, author_name, published_at "
+            f"FROM articles WHERE {where} "
+            "ORDER BY published_at DESC, created_at DESC LIMIT %s OFFSET %s",
+            [*params, PAGE_SIZE, offset],
         )
         articles = cur.fetchall()
-    return render(request, "index.html", articles=articles)
+        cur.execute(
+            "SELECT id, slug, title, published_at FROM articles WHERE status='published' "
+            "ORDER BY published_at DESC, created_at DESC LIMIT 5"
+        )
+        recent = cur.fetchall()
+    featured = articles[0] if page == 1 and not query and not month_label and articles else None
+    listed = articles[1:] if featured else articles
+    return render(
+        request,
+        "index.html",
+        articles=listed,
+        featured=featured,
+        recent=recent,
+        q=query,
+        month=month,
+        month_label=month_label,
+        page=page,
+        total=total,
+        total_pages=total_pages,
+        has_previous=page > 1,
+        has_next=page < total_pages,
+    )
+
+
+@app.get("/buscar")
+def search(q: str = "") -> RedirectResponse:
+    target = f"/?q={quote(q.strip()[:120])}" if q.strip() else "/"
+    return RedirectResponse(target, status_code=303)
+
+
+@app.get("/archivo", response_class=HTMLResponse)
+def archive(request: Request) -> HTMLResponse:
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT YEAR(published_at) AS year, MONTH(published_at) AS month, "
+            "COUNT(*) AS total FROM articles WHERE status='published' "
+            "GROUP BY year, month ORDER BY year DESC, month DESC"
+        )
+        months = cur.fetchall()
+    return render(request, "archive.html", months=months, canonical=f"{PUBLIC_URL}/archivo")
+
+
+@app.get("/feed")
+def feed() -> Response:
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT slug, title, summary, body_html, published_at FROM articles "
+            "WHERE status='published' ORDER BY published_at DESC, created_at DESC LIMIT 20"
+        )
+        articles = cur.fetchall()
+    items = []
+    for article in articles:
+        link = f"{PUBLIC_URL}/blog/{quote(article['slug'])}"
+        summary = article["summary"] or ""
+        body = re.sub(r"<[^>]+>", " ", article["body_html"] or "")
+        body = re.sub(r"\s+", " ", body).strip()[:800]
+        items.append(
+            "    <item>\n"
+            f"      <title>{escape(article['title'])}</title>\n"
+            f"      <link>{escape(link)}</link>\n"
+            f"      <guid isPermaLink=\"true\">{escape(link)}</guid>\n"
+            f"      <pubDate>{rss_date(article['published_at'])}</pubDate>\n"
+            f"      <description>{escape(summary or body)}</description>\n"
+            "    </item>"
+        )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<rss version="2.0"><channel>\n'
+        f"  <title>{escape(SITE_NAME)}</title>\n"
+        f"  <link>{escape(PUBLIC_URL)}/</link>\n"
+        f"  <description>{escape(SITE_DESCRIPTION)}</description>\n"
+        "  <language>es</language>\n"
+        f"  <lastBuildDate>{rss_date(datetime.now(UTC).replace(tzinfo=None))}</lastBuildDate>\n"
+        + "\n".join(items)
+        + "\n</channel></rss>\n"
+    )
+    return Response(xml, media_type="application/rss+xml; charset=utf-8")
+
+
+@app.get("/sitemap.xml")
+def sitemap() -> Response:
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT slug, published_at FROM articles WHERE status='published' "
+            "ORDER BY published_at DESC"
+        )
+        articles = cur.fetchall()
+    urls = [
+        f"  <url><loc>{escape(PUBLIC_URL)}/</loc></url>",
+        f"  <url><loc>{escape(PUBLIC_URL)}/archivo</loc></url>",
+    ]
+    for article in articles:
+        loc = f"{PUBLIC_URL}/blog/{quote(article['slug'])}"
+        lastmod = (
+            article["published_at"].strftime("%Y-%m-%d")
+            if article["published_at"]
+            else ""
+        )
+        suffix = f"<lastmod>{lastmod}</lastmod>" if lastmod else ""
+        urls.append(f"  <url><loc>{escape(loc)}</loc>{suffix}</url>")
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        + "\n".join(urls)
+        + "\n</urlset>\n"
+    )
+    return Response(xml, media_type="application/xml; charset=utf-8")
+
+
+@app.get("/robots.txt")
+def robots() -> PlainTextResponse:
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /admin\n"
+        "Disallow: /auth/\n"
+        f"Sitemap: {PUBLIC_URL}/sitemap.xml\n"
+    )
+    return PlainTextResponse(body)
 
 
 @app.get("/blog/{slug}", response_class=HTMLResponse)
@@ -310,6 +484,13 @@ def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLR
             (article["id"],),
         )
         comments = cur.fetchall()
+        cur.execute(
+            "SELECT id, slug, title, cover_url, published_at FROM articles "
+            "WHERE status='published' AND id<>%s "
+            "ORDER BY published_at DESC, created_at DESC LIMIT 3",
+            (article["id"],),
+        )
+        related = cur.fetchall()
     notice = {
         "pending": "Comentario recibido; quedará visible tras moderación.",
         "ok": "Comentario publicado.",
@@ -320,17 +501,41 @@ def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLR
         article=article,
         body_html=sanitize_html(article["body_html"]),
         comments=comments,
+        related=related,
         notice=notice,
+        canonical=f"{PUBLIC_URL}/blog/{quote(article['slug'])}",
+        reading_minutes=reading_minutes(article["body_html"]),
+        published_rfc822=rss_date(article["published_at"]),
+        description=article["summary"] or SITE_DESCRIPTION,
+        og_type="article",
+        og_image=(
+            f"{PUBLIC_URL}{article['cover_url']}"
+            if str(article["cover_url"] or "").startswith("/")
+            else article["cover_url"]
+        ),
     )
 
 
 @app.get("/auth/session")
 def auth_session(request: Request, token: str = "", next: str = "/admin") -> RedirectResponse:
     target = next if next.startswith("/") and not next.startswith("//") else "/admin"
-    response = RedirectResponse(target, status_code=303)
     if token and public_user(token):
+        response = RedirectResponse(target, status_code=303)
         set_cookie(response, request, token)
-    return response
+        return response
+    if token:
+        return RedirectResponse("/login?error=invalid", status_code=303)
+    return RedirectResponse("/login", status_code=303)
+
+
+@app.get("/login", response_class=HTMLResponse)
+def login_page(request: Request, error: str = "") -> HTMLResponse:
+    return render(
+        request,
+        "login.html",
+        error=error,
+        canonical=f"{PUBLIC_URL}/login",
+    )
 
 
 @app.get("/logout")

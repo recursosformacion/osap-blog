@@ -1,16 +1,49 @@
 {% extends "base.html" %}
-{% block title %}{{ article.title }} · Blog OSAP{% endblock %}
-{% block crumbs %} / {{ article.title }}{% endblock %}
+{% block title %}{{ article.title }} · {{ site_name }}{% endblock %}
+{% block og_title %}{{ article.title }}{% endblock %}
+{% block crumbs %} / <a href="/blog/{{ article.slug }}">{{ article.title }}</a>{% endblock %}
+{% block social %}
+  {% if og_image %}<meta property="og:image" content="{{ og_image }}">{% endif %}
+  <meta property="article:published_time" content="{{ published_rfc822 }}">
+  {% if article.author_name %}<meta property="article:author" content="{{ article.author_name }}">{% endif %}
+{% endblock %}
 {% block content %}
 <article class="article">
   <header class="article-head">
-    <p class="eyebrow">{{ article.published_at.strftime('%d %B %Y') if article.published_at else '' }}</p>
+    <p class="eyebrow">
+      <time datetime="{{ article.published_at.isoformat() if article.published_at else '' }}">
+        {{ article.published_at.strftime('%d/%m/%Y') if article.published_at else '' }}
+      </time>
+      · {{ reading_minutes }} min de lectura
+    </p>
     <h1>{{ article.title }}</h1>
     {% if article.summary %}<p class="lede">{{ article.summary }}</p>{% endif %}
+    {% if article.author_name %}<p class="article-meta">Por {{ article.author_name }}</p>{% endif %}
   </header>
   {% if article.cover_url %}<img class="article-cover" src="{{ article.cover_url }}" alt="">{% endif %}
   <div class="article-body">{{ body_html | safe }}</div>
 </article>
+
+<section class="article-share">
+  <a class="btn secondary" href="/feed">RSS</a>
+  <a class="btn secondary" href="{{ osap_url }}">Abrir OSAP</a>
+</section>
+
+{% if related %}
+<section class="related">
+  <h2>Más artículos</h2>
+  <div class="cards">
+    {% for a in related %}
+      <article class="card article-card">
+        {% if a.cover_url %}<a href="/blog/{{ a.slug }}"><img class="card-cover" src="{{ a.cover_url }}" alt=""></a>{% endif %}
+        <p class="eyebrow">{{ a.published_at.strftime('%d/%m/%Y') if a.published_at else '' }}</p>
+        <h2><a href="/blog/{{ a.slug }}">{{ a.title }}</a></h2>
+        <a class="read" href="/blog/{{ a.slug }}">Leer artículo →</a>
+      </article>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
 
 {% if notice %}<div class="notice ok">{{ notice }}</div>{% endif %}
 <section class="comments">

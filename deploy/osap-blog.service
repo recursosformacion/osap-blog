@@ -1,0 +1,20 @@
+[Unit]
+Description=OSAP Blog (FastAPI)
+After=network.target mysql.service mariadb.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ocw
+Group=ocw
+WorkingDirectory=/home/ocw/openmusicrepository.com/osap-blog
+EnvironmentFile=/etc/openmusicrepository/osap-blog.env
+Environment=OSAP_BLOG_PUBLIC_URL=https://blog.openmusicrepository.com
+Environment=OSAP_BLOG_AUTH_URL=http://127.0.0.1:8200
+Environment=OSAP_PUBLIC_URL=https://app.openmusicrepository.com
+ExecStart=/home/ocw/openmusicrepository.com/osap-blog/.venv/bin/python -m uvicorn app:app --host 127.0.0.1 --port 8500
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

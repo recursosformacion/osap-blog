@@ -3,7 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Blog · OSAP{% endblock %}</title>
+  <title>{% block title %}{{ site_name }}{% endblock %}</title>
+  <meta name="description" content="{{ description|default(site_description) }}">
+  <link rel="canonical" href="{{ canonical }}">
+  <link rel="alternate" type="application/rss+xml" title="{{ site_name }}" href="{{ feed_url }}">
+  <meta property="og:site_name" content="{{ site_name }}">
+  <meta property="og:type" content="{{ og_type|default('website') }}">
+  <meta property="og:title" content="{% block og_title %}{{ site_name }}{% endblock %}">
+  <meta property="og:description" content="{{ description|default(site_description) }}">
+  <meta property="og:url" content="{{ canonical }}">
+  {% block social %}{% endblock %}
   <link rel="stylesheet" href="{{ url_for('static', path='blog.css') }}?v={{ version }}">
 </head>
 <body>
@@ -13,20 +22,36 @@
       <span class="mark">B</span>
       <span><strong>BLOG</strong><small>OSAP</small></span>
     </a>
+    <form class="side-search" method="get" action="/buscar" role="search">
+      <label class="sr-only" for="side-q">Buscar en el blog</label>
+      <input id="side-q" type="search" name="q" value="{{ q|default('') }}" placeholder="Buscar…">
+    </form>
     <nav>
-      <a href="/">Artículos</a>
+      <a href="/">Últimos artículos</a>
+      <a href="/archivo">Archivo</a>
+      <a href="/feed">Feed RSS</a>
       <a href="{{ osap_url }}">Abrir OSAP</a>
       {% if can_edit %}<a href="/admin">Administración</a>{% endif %}
       {% if user %}
         <a href="/logout">Salir</a>
+      {% else %}
+        <a href="{{ login_url }}">Entrar con OSAP</a>
       {% endif %}
     </nav>
-    <p class="side-note">Blog independiente de OSAP. Autenticación delegada en OSAP.</p>
+    <p class="side-note">Blog independiente de OSAP. La portada y los artículos son públicos; solo la edición y los comentarios piden sesión.</p>
   </aside>
   <main>
     <header class="topbar">
       <span class="crumbs"><a href="/">Blog</a>{% block crumbs %}{% endblock %}</span>
-      <span class="session">{% if user %}<span class="dot"></span>{{ user_name }}{% else %}Sin sesión{% endif %}</span>
+      <span class="session">
+        {% if user %}
+          <span class="dot"></span>{{ user_name }}
+          {% if can_edit %}<a class="btn secondary" href="/admin">Administración</a>{% endif %}
+        {% else %}
+          <span>Lectura pública</span>
+          <a class="btn primary" href="{{ login_url }}">Entrar con OSAP</a>
+        {% endif %}
+      </span>
     </header>
     <div class="content">
       {% block content %}{% endblock %}

@@ -1,26 +1,107 @@
 {% extends "base.html" %}
-{% block title %}Blog · OSAP{% endblock %}
+{% block title %}{% if q %}Búsqueda: {{ q }} · {% elif month_label %}Archivo: {{ month_label }} · {% endif %}{{ site_name }}{% endblock %}
+{% block og_title %}{% if q %}Búsqueda: {{ q }}{% elif month_label %}Archivo: {{ month_label }}{% else %}{{ site_name }}{% endif %}{% endblock %}
 {% block content %}
 <section class="page-head">
   <div>
     <p class="eyebrow">OpenMusicRepository</p>
-    <h1>Noticias y artículos</h1>
-    <p class="lede">Historias, análisis y novedades sobre el repertorio y la comunidad de OSAP.</p>
+    <h1>{% if q %}Resultados para «{{ q }}»{% elif month_label %}Artículos de {{ month_label }}{% else %}Últimos artículos{% endif %}</h1>
+    <p class="lede">
+      {% if q %}
+        {{ total }} artículo{% if total != 1 %}s{% endif %} encontrado{% if total != 1 %}s{% endif %}.
+        <a href="/">Volver a la portada</a>.
+      {% elif month_label %}
+        {{ total }} artículo{% if total != 1 %}s{% endif %} publicado{% if total != 1 %}s{% endif %} en {{ month_label }}.
+        <a href="/archivo">Ver todo el archivo</a>.
+      {% else %}
+        {{ site_description }} Sin registro: la portada y los artículos son de lectura libre.
+      {% endif %}
+    </p>
   </div>
+  <form class="hero-search" method="get" action="/buscar" role="search">
+    <label class="sr-only" for="q">Buscar en el blog</label>
+    <input id="q" type="search" name="q" value="{{ q }}" placeholder="Buscar artículos…">
+    <button class="btn primary" type="submit">Buscar</button>
+  </form>
 </section>
-{% if articles %}
-<section class="cards">
-  {% for a in articles %}
-    <article class="card article-card">
-      {% if a.cover_url %}<img class="card-cover" src="{{ a.cover_url }}" alt="">{% endif %}
-      <p class="eyebrow">{{ a.published_at.strftime('%d %b %Y') if a.published_at else '' }}</p>
-      <h2><a href="/blog/{{ a.slug }}">{{ a.title }}</a></h2>
-      {% if a.summary %}<p>{{ a.summary }}</p>{% endif %}
-      <a class="read" href="/blog/{{ a.slug }}">Leer artículo →</a>
-    </article>
-  {% endfor %}
-</section>
-{% else %}
-<div class="card empty">Todavía no hay artículos publicados.</div>
+
+{% if featured %}
+<article class="hero">
+  {% if featured.cover_url %}
+    <a class="hero-cover" href="/blog/{{ featured.slug }}"><img src="{{ featured.cover_url }}" alt=""></a>
+  {% endif %}
+  <div class="hero-copy">
+    <p class="eyebrow">Destacado</p>
+    <h2><a href="/blog/{{ featured.slug }}">{{ featured.title }}</a></h2>
+    {% if featured.summary %}<p class="lede">{{ featured.summary }}</p>{% endif %}
+    <p class="article-meta">
+      {% if featured.author_name %}{{ featured.author_name }} · {% endif %}
+      <time datetime="{{ featured.published_at.isoformat() if featured.published_at else '' }}">
+        {{ featured.published_at.strftime('%d/%m/%Y') if featured.published_at else '' }}
+      </time>
+    </p>
+    <a class="read" href="/blog/{{ featured.slug }}">Leer artículo →</a>
+  </div>
+</article>
 {% endif %}
+
+<div class="home-grid">
+  <section>
+    {% if articles %}
+    <section class="cards">
+      {% for a in articles %}
+        <article class="card article-card">
+          {% if a.cover_url %}<a href="/blog/{{ a.slug }}"><img class="card-cover" src="{{ a.cover_url }}" alt=""></a>{% endif %}
+          <p class="eyebrow">{{ a.published_at.strftime('%d/%m/%Y') if a.published_at else '' }}</p>
+          <h2><a href="/blog/{{ a.slug }}">{{ a.title }}</a></h2>
+          {% if a.summary %}<p>{{ a.summary }}</p>{% endif %}
+          <a class="read" href="/blog/{{ a.slug }}">Leer artículo →</a>
+        </article>
+      {% endfor %}
+    </section>
+    {% elif not featured %}
+      <div class="card empty">
+        {% if q %}No hay artículos que coincidan con la búsqueda.{% else %}Todavía no hay artículos publicados.{% endif %}
+      </div>
+    {% endif %}
+
+    {% if total_pages > 1 %}
+    <nav class="pagination" aria-label="Paginación">
+      {% if has_previous %}
+        <a class="btn secondary" href="/?page={{ page - 1 }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}{% if month %}&amp;month={{ month }}{% endif %}">← Anteriores</a>
+      {% else %}<span></span>{% endif %}
+      <span>Página {{ page }} de {{ total_pages }}</span>
+      {% if has_next %}
+        <a class="btn secondary" href="/?page={{ page + 1 }}{% if q %}&amp;q={{ q|urlencode }}{% endif %}{% if month %}&amp;month={{ month }}{% endif %}">Siguientes →</a>
+      {% else %}<span></span>{% endif %}
+    </nav>
+    {% endif %}
+  </section>
+
+  <aside class="widgets" aria-label="Barra lateral">
+    <section class="card widget">
+      <h2>Recientes</h2>
+      <ul class="recent-list">
+        {% for r in recent %}
+          <li>
+            <a href="/blog/{{ r.slug }}">{{ r.title }}</a>
+            <small>{{ r.published_at.strftime('%d/%m/%Y') if r.published_at else '' }}</small>
+          </li>
+        {% else %}
+          <li class="hint">Sin artículos.</li>
+        {% endfor %}
+      </ul>
+    </section>
+    <section class="card widget">
+      <h2>Archivo</h2>
+      <p class="hint">Explora los artículos por mes de publicación.</p>
+      <a class="read" href="/archivo">Ver archivo →</a>
+    </section>
+    <section class="card widget">
+      <h2>Suscríbete</h2>
+      <p class="hint">Sigue el blog desde tu lector de RSS.</p>
+      <a class="read" href="/feed">Feed RSS →</a>
+    </section>
+  </aside>
+</div>
 {% endblock %}

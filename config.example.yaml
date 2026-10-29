@@ -8,7 +8,11 @@ db:
 server:
   host: 127.0.0.1
   port: 8500
-  public_url: http://localhost:8500
+  # En desarrollo: http://osap-blog. En producción: https://blog.openmusicrepository.com
+  public_url: http://osap-blog
+  site_name: Blog OSAP
+  site_description: Historias, análisis y novedades sobre el repertorio y la comunidad de OSAP.
+  page_size: 9
 
 auth:
   base_url: http://127.0.0.1:8200

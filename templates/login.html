@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Entrar · {{ site_name }}{% endblock %}
+{% block crumbs %} / Entrar{% endblock %}
+{% block content %}
+<section class="card login-card">
+  <p class="eyebrow">Cuenta OSAP</p>
+  <h1>Entrar para editar</h1>
+  {% if error %}
+  <p class="notice error">La sesión de OSAP no llegó al blog o ya no es válida. Vuelve a iniciar sesión.</p>
+  {% endif %}
+  <p class="lede">
+    La lectura y los comentarios públicos no necesitan cuenta. Para crear o editar artículos,
+    el blog delega la identidad en OSAP.
+  </p>
+  <p>
+    <a class="btn primary" href="{{ login_url }}">Entrar con OSAP</a>
+  </p>
+  <p class="hint">
+    Al volver desde OSAP, la sesión se transfiere al blog y se abre la administración.
+    Si OSAP no está disponible, puedes seguir leyendo la portada pública.
+  </p>
+</section>
+{% endblock %}
