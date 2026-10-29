@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="es" translate="no">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Blog · OSAP{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='blog.css') }}?v={{ version }}">
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar">
+    <a class="brand" href="/">
+      <span class="mark">B</span>
+      <span><strong>BLOG</strong><small>OSAP</small></span>
+    </a>
+    <nav>
+      <a href="/">Artículos</a>
+      <a href="{{ osap_url }}">Abrir OSAP</a>
+      {% if can_edit %}<a href="/admin">Administración</a>{% endif %}
+      {% if user %}
+        <a href="/logout">Salir</a>
+      {% endif %}
+    </nav>
+    <p class="side-note">Blog independiente de OSAP. Autenticación delegada en OSAP.</p>
+  </aside>
+  <main>
+    <header class="topbar">
+      <span class="crumbs"><a href="/">Blog</a>{% block crumbs %}{% endblock %}</span>
+      <span class="session">{% if user %}<span class="dot"></span>{{ user_name }}{% else %}Sin sesión{% endif %}</span>
+    </header>
+    <div class="content">
+      {% block content %}{% endblock %}
+    </div>
+  </main>
+</div>
+</body>
+</html>

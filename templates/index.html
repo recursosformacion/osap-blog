@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Blog · OSAP{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div>
+    <p class="eyebrow">OpenMusicRepository</p>
+    <h1>Noticias y artículos</h1>
+    <p class="lede">Historias, análisis y novedades sobre el repertorio y la comunidad de OSAP.</p>
+  </div>
+</section>
+{% if articles %}
+<section class="cards">
+  {% for a in articles %}
+    <article class="card article-card">
+      {% if a.cover_url %}<img class="card-cover" src="{{ a.cover_url }}" alt="">{% endif %}
+      <p class="eyebrow">{{ a.published_at.strftime('%d %b %Y') if a.published_at else '' }}</p>
+      <h2><a href="/blog/{{ a.slug }}">{{ a.title }}</a></h2>
+      {% if a.summary %}<p>{{ a.summary }}</p>{% endif %}
+      <a class="read" href="/blog/{{ a.slug }}">Leer artículo →</a>
+    </article>
+  {% endfor %}
+</section>
+{% else %}
+<div class="card empty">Todavía no hay artículos publicados.</div>
+{% endif %}
+{% endblock %}

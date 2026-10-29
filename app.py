@@ -1,0 +1,564 @@
+"""Aplicativo de blog independiente de OSAP.
+
+Usa su propia base de datos (`osap_blog`), su propio almacén de imágenes y solo delega la
+autenticación en OSAP Auth. No comparte tablas con osap-api.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import unicodedata
+import uuid
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timezone
+from html import escape
+from html.parser import HTMLParser
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote, urlparse
+
+import httpx
+import pymysql
+import yaml
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pymysql.cursors import DictCursor
+
+BASE_DIR = Path(__file__).resolve().parent
+APP_VERSION = "0.1.0"
+
+
+def _load_config() -> dict[str, Any]:
+    path = Path(os.environ.get("OSAP_BLOG_CONFIG", BASE_DIR / "config.yaml"))
+    if not path.exists():
+        path = BASE_DIR / "config.example.yaml"
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data.setdefault("db", {})
+    data.setdefault("server", {})
+    data.setdefault("auth", {})
+    data.setdefault("osap", {})
+    data.setdefault("media", {})
+    data.setdefault("editor", {})
+    data["db"]["password"] = os.environ.get(
+        "OSAP_BLOG_DB_PASSWORD", data["db"].get("password", "")
+    )
+    data["server"]["public_url"] = os.environ.get(
+        "OSAP_BLOG_PUBLIC_URL", data["server"].get("public_url", "http://localhost:8500")
+    ).rstrip("/")
+    data["auth"]["base_url"] = os.environ.get(
+        "OSAP_BLOG_AUTH_URL", data["auth"].get("base_url", "http://127.0.0.1:8200")
+    ).rstrip("/")
+    data["osap"]["public_url"] = os.environ.get(
+        "OSAP_PUBLIC_URL", data["osap"].get("public_url", "http://osap-app")
+    ).rstrip("/")
+    data["media"]["root"] = os.environ.get(
+        "OSAP_BLOG_MEDIA_ROOT", data["media"].get("root", "data/media")
+    )
+    return data
+
+
+CONFIG = _load_config()
+DB = CONFIG["db"]
+AUTH_BASE = CONFIG["auth"]["base_url"]
+PUBLIC_URL = CONFIG["server"]["public_url"]
+OSAP_URL = CONFIG["osap"]["public_url"]
+MEDIA_ROOT = Path(CONFIG["media"]["root"])
+if not MEDIA_ROOT.is_absolute():
+    MEDIA_ROOT = BASE_DIR / MEDIA_ROOT
+MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
+COOKIE = "osap_blog_token"
+MAX_UPLOAD = int(CONFIG["media"].get("max_bytes", 5 * 1024 * 1024))
+EDITOR_ROLES = list(CONFIG["editor"].get("roles", []))
+COMMENT_MODERATION = bool(CONFIG["editor"].get("moderation", True))
+
+ALLOWED_TAGS = {
+    "p", "br", "strong", "b", "em", "i", "u", "s", "ul", "ol", "li",
+    "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "a", "hr",
+    "figure", "figcaption", "img", "div", "span",
+}
+VOID_TAGS = {"br", "hr", "img"}
+CLASSES = {"align-left", "align-right", "align-center", "media-wide"}
+
+
+class BlogSanitizer(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.stack: list[str] = []
+        self.skip = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag in {"script", "style", "iframe", "object", "embed"}:
+            self.skip += 1
+            return
+        if self.skip or tag not in ALLOWED_TAGS:
+            return
+        values = dict(attrs)
+        safe: list[tuple[str, str]] = []
+        cls = " ".join(
+            token for token in str(values.get("class") or "").split() if token in CLASSES
+        )
+        if cls:
+            safe.append(("class", cls))
+        if tag == "a":
+            href = str(values.get("href") or "")
+            parsed = urlparse(href)
+            if href.startswith("/") or parsed.scheme in {"http", "https", "mailto"}:
+                safe.extend([("href", href), ("rel", "nofollow noopener")])
+        elif tag == "img":
+            src = str(values.get("src") or "")
+            if not src.startswith("/media/"):
+                return
+            safe.extend([("src", src), ("alt", str(values.get("alt") or "")), ("loading", "lazy")])
+            for key in ("width", "height"):
+                value = str(values.get(key) or "")
+                if value.isdigit():
+                    safe.append((key, value))
+        suffix = "".join(f' {key}="{escape(value, quote=True)}"' for key, value in safe)
+        if tag in VOID_TAGS:
+            self.parts.append(f"<{tag}{suffix}>")
+        else:
+            self.parts.append(f"<{tag}{suffix}>")
+            self.stack.append(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag in {"script", "style", "iframe", "object", "embed"}:
+            self.skip = max(0, self.skip - 1)
+            return
+        if self.skip or tag not in ALLOWED_TAGS or tag in VOID_TAGS:
+            return
+        if tag in self.stack:
+            while self.stack and self.stack.pop() != tag:
+                pass
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data: str) -> None:
+        if not self.skip:
+            self.parts.append(escape(data, quote=False))
+
+
+def sanitize_html(value: str | None) -> str:
+    parser = BlogSanitizer()
+    parser.feed(value or "")
+    parser.close()
+    return "".join(parser.parts).strip()
+
+
+def slugify(value: str) -> str:
+    text = unicodedata.normalize("NFKD", value)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    text = re.sub(r"[^a-z0-9]+", "-", text.casefold()).strip("-")
+    return text[:160] or "articulo"
+
+
+def unique_slug(title: str) -> str:
+    base = slugify(title)
+    candidate = base
+    with db() as conn, conn.cursor() as cur:
+        for index in range(2, 100):
+            cur.execute("SELECT id FROM articles WHERE slug=%s", (candidate,))
+            if cur.fetchone() is None:
+                return candidate
+            candidate = f"{base}-{index}"
+    return f"{base}-{uuid.uuid4().hex[:8]}"
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def public_user(token: str) -> dict[str, Any] | None:
+    if not token:
+        return None
+    try:
+        response = httpx.get(
+            f"{AUTH_BASE}/auth/me",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=5.0,
+        )
+    except httpx.HTTPError:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        data = response.json()
+    except ValueError:
+        return None
+    return data if data.get("user_id") else None
+
+
+def can_edit(user: dict[str, Any] | None) -> bool:
+    if not user:
+        return False
+    if not EDITOR_ROLES:
+        return True
+    roles = {str(role) for role in (user.get("roles") or [])}
+    return bool(roles & set(EDITOR_ROLES))
+
+
+def token_for(request: Request) -> str:
+    return request.cookies.get(COOKIE, "")
+
+
+def set_cookie(response: RedirectResponse, request: Request, token: str) -> None:
+    response.set_cookie(
+        COOKIE,
+        token,
+        max_age=3600,
+        httponly=True,
+        secure=PUBLIC_URL.startswith("https://"),
+        samesite="lax",
+        path="/",
+    )
+
+
+@contextmanager
+def db() -> Iterator[pymysql.Connection]:
+    conn = pymysql.connect(
+        host=DB.get("host", "127.0.0.1"),
+        port=int(DB.get("port", 3306)),
+        user=DB.get("user"),
+        password=DB.get("password", ""),
+        database=DB.get("name", "osap_blog"),
+        charset="utf8mb4",
+        cursorclass=DictCursor,
+        autocommit=False,
+    )
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def init_schema() -> None:
+    schema = (BASE_DIR / "schema.sql").read_text(encoding="utf-8")
+    with db() as conn, conn.cursor() as cur:
+        for statement in schema.split(";"):
+            if statement.strip():
+                cur.execute(statement)
+        conn.commit()
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_schema()
+    yield
+
+
+app = FastAPI(title="OSAP Blog", docs_url=None, redoc_url=None, lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
+templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+def render(
+    request: Request,
+    template: str,
+    *,
+    status_code: int = 200,
+    **context: Any,
+) -> HTMLResponse:
+    token = token_for(request)
+    user = public_user(token)
+    base = {
+        "request": request,
+        "version": APP_VERSION,
+        "user": user,
+        "user_name": str((user or {}).get("name") or (user or {}).get("email") or ""),
+        "can_edit": can_edit(user),
+        "osap_url": OSAP_URL,
+        "public_url": PUBLIC_URL,
+    }
+    base.update(context)
+    return templates.TemplateResponse(request, template, base, status_code=status_code)
+
+
+@app.get("/health")
+def health() -> dict[str, str]:
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1")
+        cur.fetchone()
+    return {"status": "ok", "version": APP_VERSION}
+
+
+@app.get("/", response_class=HTMLResponse)
+def home(request: Request) -> HTMLResponse:
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, slug, title, summary, cover_url, published_at "
+            "FROM articles WHERE status='published' ORDER BY published_at DESC, created_at DESC"
+        )
+        articles = cur.fetchall()
+    return render(request, "index.html", articles=articles)
+
+
+@app.get("/blog/{slug}", response_class=HTMLResponse)
+def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLResponse:
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM articles WHERE slug=%s AND status='published'", (slug,))
+        article = cur.fetchone()
+        if article is None:
+            return render(request, "not_found.html", status_code=404)
+        cur.execute(
+            "SELECT user_name, body, created_at FROM comments "
+            "WHERE article_id=%s AND status='approved' ORDER BY created_at",
+            (article["id"],),
+        )
+        comments = cur.fetchall()
+    notice = {
+        "pending": "Comentario recibido; quedará visible tras moderación.",
+        "ok": "Comentario publicado.",
+    }.get(comment_status, "")
+    return render(
+        request,
+        "article.html",
+        article=article,
+        body_html=sanitize_html(article["body_html"]),
+        comments=comments,
+        notice=notice,
+    )
+
+
+@app.get("/auth/session")
+def auth_session(request: Request, token: str = "", next: str = "/admin") -> RedirectResponse:
+    target = next if next.startswith("/") and not next.startswith("//") else "/admin"
+    response = RedirectResponse(target, status_code=303)
+    if token and public_user(token):
+        set_cookie(response, request, token)
+    return response
+
+
+@app.get("/logout")
+def logout() -> RedirectResponse:
+    response = RedirectResponse("/", status_code=303)
+    response.delete_cookie(COOKIE, path="/")
+    return response
+
+
+@app.post("/comments")
+def create_comment(
+    request: Request,
+    article_id: str = Form(...),
+    body: str = Form(...),
+    slug: str = Form(""),
+) -> RedirectResponse:
+    user = public_user(token_for(request))
+    if not user:
+        return RedirectResponse("/", status_code=303)
+    body = re.sub(r"\s+", " ", body).strip()[:4000]
+    if body:
+        status = "pending" if COMMENT_MODERATION else "approved"
+        with db() as conn, conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO comments (id, article_id, user_id, user_name, body, status, created_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    str(uuid.uuid4()),
+                    article_id,
+                    str(user["user_id"]),
+                    str(user.get("name") or user.get("email") or "OSAP"),
+                    body,
+                    status,
+                    utcnow(),
+                ),
+            )
+            conn.commit()
+    return RedirectResponse(
+        f"/blog/{quote(slug)}?comment_status={'pending' if COMMENT_MODERATION else 'ok'}",
+        status_code=303,
+    )
+
+
+@app.get("/admin", response_class=HTMLResponse)
+def admin(request: Request) -> HTMLResponse:
+    user = public_user(token_for(request))
+    if not can_edit(user):
+        return render(request, "forbidden.html", status_code=403)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM articles ORDER BY updated_at DESC")
+        articles = cur.fetchall()
+        cur.execute(
+            "SELECT c.*, a.title, a.slug FROM comments c JOIN articles a ON a.id=c.article_id "
+            "WHERE c.status='pending' ORDER BY c.created_at"
+        )
+        comments = cur.fetchall()
+    return render(request, "admin.html", articles=articles, comments=comments)
+
+
+@app.get("/admin/new", response_class=HTMLResponse)
+def new_article(request: Request) -> HTMLResponse:
+    if not can_edit(public_user(token_for(request))):
+        return render(request, "forbidden.html", status_code=403)
+    return render(request, "edit.html", article=None, body_html="", editing=False)
+
+
+@app.get("/admin/{article_id}/edit", response_class=HTMLResponse)
+def edit_article(request: Request, article_id: str) -> HTMLResponse:
+    if not can_edit(public_user(token_for(request))):
+        return render(request, "forbidden.html", status_code=403)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM articles WHERE id=%s", (article_id,))
+        article = cur.fetchone()
+    if article is None:
+        return render(request, "not_found.html", status_code=404)
+    return render(
+        request,
+        "edit.html",
+        article=article,
+        body_html=sanitize_html(article["body_html"]),
+        editing=True,
+    )
+
+
+def save_article(
+    request: Request,
+    article_id: str | None,
+    title: str,
+    summary: str,
+    body: str,
+    cover_url: str,
+    publish: bool,
+) -> RedirectResponse:
+    user = public_user(token_for(request))
+    if not can_edit(user):
+        return RedirectResponse("/", status_code=303)
+    title = title.strip()
+    if not title:
+        return RedirectResponse("/admin", status_code=303)
+    clean_body = sanitize_html(body)
+    now = utcnow()
+    with db() as conn, conn.cursor() as cur:
+        if article_id:
+            cur.execute("SELECT id, body_html, published_at FROM articles WHERE id=%s", (article_id,))
+            current = cur.fetchone()
+            if current is None:
+                return RedirectResponse("/admin", status_code=303)
+            cur.execute(
+                "INSERT INTO article_revisions (id, article_id, body_html, author_id, created_at) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (str(uuid.uuid4()), article_id, current["body_html"], str(user["user_id"]), now),
+            )
+            published_at = current["published_at"] or (now if publish else None)
+            cur.execute(
+                "UPDATE articles SET title=%s, summary=%s, body_html=%s, cover_url=%s, "
+                "status=%s, published_at=%s, updated_at=%s WHERE id=%s",
+                (
+                    title,
+                    summary.strip() or None,
+                    clean_body,
+                    cover_url.strip() or None,
+                    "published" if publish else "draft",
+                    published_at,
+                    now,
+                    article_id,
+                ),
+            )
+        else:
+            article_id = str(uuid.uuid4())
+            cur.execute(
+                "INSERT INTO articles (id, slug, title, summary, body_html, cover_url, status, "
+                "author_id, author_name, published_at, created_at, updated_at) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                (
+                    article_id,
+                    unique_slug(title),
+                    title,
+                    summary.strip() or None,
+                    clean_body,
+                    cover_url.strip() or None,
+                    "published" if publish else "draft",
+                    str(user["user_id"]),
+                    str(user.get("name") or user.get("email") or "OSAP"),
+                    now if publish else None,
+                    now,
+                    now,
+                ),
+            )
+        conn.commit()
+    return RedirectResponse(f"/admin/{article_id}/edit", status_code=303)
+
+
+@app.post("/admin/new")
+def create_article(
+    request: Request,
+    title: str = Form(...),
+    summary: str = Form(""),
+    body: str = Form(""),
+    cover_url: str = Form(""),
+    publish: str = Form("0"),
+) -> RedirectResponse:
+    return save_article(request, None, title, summary, body, cover_url, publish == "1")
+
+
+@app.post("/admin/{article_id}/edit")
+def update_article(
+    request: Request,
+    article_id: str,
+    title: str = Form(...),
+    summary: str = Form(""),
+    body: str = Form(""),
+    cover_url: str = Form(""),
+    publish: str = Form("0"),
+) -> RedirectResponse:
+    return save_article(request, article_id, title, summary, body, cover_url, publish == "1")
+
+
+@app.post("/admin/upload")
+def upload_media(
+    request: Request, image: UploadFile = File(...)  # noqa: B008
+) -> JSONResponse:
+    user = public_user(token_for(request))
+    if not can_edit(user):
+        return JSONResponse({"error": "No autorizado"}, status_code=403)
+    content_type = image.content_type or ""
+    if not content_type.startswith("image/"):
+        return JSONResponse({"error": "El archivo no es una imagen"}, status_code=400)
+    data = image.file.read(MAX_UPLOAD + 1)
+    if len(data) > MAX_UPLOAD:
+        return JSONResponse({"error": "Imagen demasiado grande"}, status_code=413)
+    extension = {
+        "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
+        "image/gif": ".gif",
+    }.get(content_type, ".bin")
+    media_id = str(uuid.uuid4())
+    path = MEDIA_ROOT / f"{media_id}{extension}"
+    path.write_bytes(data)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO media (id, filename, content_type, path, uploaded_by, created_at) "
+            "VALUES (%s,%s,%s,%s,%s,%s)",
+            (media_id, image.filename or path.name, content_type, path.name, str(user["user_id"]), utcnow()),
+        )
+        conn.commit()
+    return JSONResponse({"url": f"/media/{media_id}", "id": media_id})
+
+
+@app.get("/media/{media_id}")
+def media(media_id: str) -> FileResponse:
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("SELECT path, content_type FROM media WHERE id=%s", (media_id,))
+        row = cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=404)
+    path = MEDIA_ROOT / row["path"]
+    if not path.exists():
+        raise HTTPException(status_code=404)
+    return FileResponse(path, media_type=row["content_type"])
+
+
+@app.post("/admin/comments/{comment_id}/{decision}")
+def moderate_comment(request: Request, comment_id: str, decision: str) -> RedirectResponse:
+    if not can_edit(public_user(token_for(request))) or decision not in {"approved", "rejected"}:
+        return RedirectResponse("/admin", status_code=303)
+    with db() as conn, conn.cursor() as cur:
+        cur.execute("UPDATE comments SET status=%s WHERE id=%s", (decision, comment_id))
+        conn.commit()
+    return RedirectResponse("/admin", status_code=303)
+
+
+

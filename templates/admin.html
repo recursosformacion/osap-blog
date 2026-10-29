@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Administración · Blog OSAP{% endblock %}
+{% block crumbs %} / Administración{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div><p class="eyebrow">Blog</p><h1>Administración</h1><p class="lede">Artículos y comentarios.</p></div>
+  <a class="btn primary" href="/admin/new">Nuevo artículo</a>
+</section>
+
+<section class="card">
+  <h2>Artículos</h2>
+  {% if articles %}
+  <table>
+    <thead><tr><th>Título</th><th>Estado</th><th>Actualizado</th><th></th></tr></thead>
+    <tbody>
+    {% for a in articles %}
+      <tr>
+        <td>{{ a.title }}</td>
+        <td><span class="status {{ a.status }}">{{ a.status }}</span></td>
+        <td>{{ a.updated_at.strftime('%d/%m/%Y %H:%M') }}</td>
+        <td><a href="/admin/{{ a.id }}/edit">Editar</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}<p class="hint">Sin artículos.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Comentarios pendientes</h2>
+  {% for c in comments %}
+    <div class="moderation">
+      <p><strong>{{ c.user_name }}</strong> en <a href="/blog/{{ c.slug }}">{{ c.title }}</a></p>
+      <p>{{ c.body }}</p>
+      <form method="post" action="/admin/comments/{{ c.id }}/approved"><button class="btn secondary" type="submit">Aprobar</button></form>
+      <form method="post" action="/admin/comments/{{ c.id }}/rejected"><button class="btn danger" type="submit">Rechazar</button></form>
+    </div>
+  {% else %}<p class="hint">No hay comentarios pendientes.</p>{% endfor %}
+</section>
+{% endblock %}

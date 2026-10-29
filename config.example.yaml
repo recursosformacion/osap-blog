@@ -1,0 +1,25 @@
+db:
+  host: 127.0.0.1
+  port: 3306
+  user: osap2027
+  password: CAMBIAR
+  name: osap_blog
+
+server:
+  host: 127.0.0.1
+  port: 8500
+  public_url: http://localhost:8500
+
+auth:
+  base_url: http://127.0.0.1:8200
+
+osap:
+  public_url: http://osap-app
+
+media:
+  root: data/media
+  max_bytes: 5242880
+
+editor:
+  roles: []
+  moderation: true

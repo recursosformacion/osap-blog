@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% block title %}{{ article.title }} · Blog OSAP{% endblock %}
+{% block crumbs %} / {{ article.title }}{% endblock %}
+{% block content %}
+<article class="article">
+  <header class="article-head">
+    <p class="eyebrow">{{ article.published_at.strftime('%d %B %Y') if article.published_at else '' }}</p>
+    <h1>{{ article.title }}</h1>
+    {% if article.summary %}<p class="lede">{{ article.summary }}</p>{% endif %}
+  </header>
+  {% if article.cover_url %}<img class="article-cover" src="{{ article.cover_url }}" alt="">{% endif %}
+  <div class="article-body">{{ body_html | safe }}</div>
+</article>
+
+{% if notice %}<div class="notice ok">{{ notice }}</div>{% endif %}
+<section class="comments">
+  <h2>Comentarios</h2>
+  {% for c in comments %}
+    <div class="comment">
+      <p class="comment-meta"><strong>{{ c.user_name }}</strong> · {{ c.created_at.strftime('%d/%m/%Y %H:%M') }}</p>
+      <p>{{ c.body }}</p>
+    </div>
+  {% else %}
+    <p class="hint">No hay comentarios todavía.</p>
+  {% endfor %}
+  {% if user %}
+    <form class="comment-form card" method="post" action="/comments">
+      <input type="hidden" name="article_id" value="{{ article.id }}">
+      <input type="hidden" name="slug" value="{{ article.slug }}">
+      <label for="comment">Escribe un comentario</label>
+      <textarea id="comment" name="body" rows="4" maxlength="4000" required></textarea>
+      <div class="form-actions"><button class="btn primary" type="submit">Publicar comentario</button></div>
+    </form>
+  {% else %}
+    <p class="hint">Entra con tu cuenta de OSAP para comentar.</p>
+  {% endif %}
+</section>
+{% endblock %}

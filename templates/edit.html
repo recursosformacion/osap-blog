@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Editar' if editing else 'Nuevo' }} artículo · Blog OSAP{% endblock %}
+{% block crumbs %} / <a href="/admin">Administración</a> / {{ 'Editar' if editing else 'Nuevo' }}{% endblock %}
+{% block content %}
+<section class="page-head">
+  <div><p class="eyebrow">Editor</p><h1>{{ 'Editar artículo' if editing else 'Nuevo artículo' }}</h1></div>
+  <a class="btn secondary" href="/admin">Volver</a>
+</section>
+<form id="article-form" class="editor-layout" method="post"
+      action="{{ '/admin/' ~ article.id ~ '/edit' if editing else '/admin/new' }}">
+  <div class="editor-main">
+    <div class="card form-card">
+      <label for="title">Título</label>
+      <input id="title" name="title" type="text" value="{{ article.title if article else '' }}" required>
+      <label for="summary">Entradilla</label>
+      <textarea id="summary" name="summary" rows="2">{{ article.summary if article and article.summary else '' }}</textarea>
+      <label for="cover_url">URL de portada</label>
+      <input id="cover_url" name="cover_url" type="text" value="{{ article.cover_url if article and article.cover_url else '' }}">
+    </div>
+
+    <div class="card editor-card">
+      <div class="toolbar" role="toolbar" aria-label="Formato">
+        <button type="button" data-cmd="bold" title="Negrita"><b>B</b></button>
+        <button type="button" data-cmd="italic" title="Cursiva"><i>I</i></button>
+        <button type="button" data-cmd="formatBlock" data-value="h2" title="Título">H2</button>
+        <button type="button" data-cmd="formatBlock" data-value="h3" title="Subtítulo">H3</button>
+        <button type="button" data-cmd="formatBlock" data-value="blockquote" title="Cita">❝</button>
+        <button type="button" data-cmd="insertUnorderedList" title="Lista">•</button>
+        <button type="button" data-cmd="createLink" title="Enlace">↗</button>
+        <span class="tool-sep"></span>
+        <button type="button" data-align="align-left" title="Imagen a la izquierda">◧</button>
+        <button type="button" data-align="align-center" title="Imagen centrada">▣</button>
+        <button type="button" data-align="align-right" title="Imagen a la derecha">◨</button>
+        <button type="button" id="image-button" title="Insertar imagen">Imagen</button>
+        <input id="image-input" type="file" accept="image/*" hidden>
+        <span id="editor-status" class="hint"></span>
+      </div>
+      <div id="editor" class="editor" contenteditable="true" spellcheck="true">{{ body_html | safe }}</div>
+      <input id="body_html" name="body" type="hidden">
+    </div>
+  </div>
+  <aside class="editor-side card">
+    <p class="eyebrow">Publicación</p>
+    <p class="hint">Los cambios se guardan al pulsar un botón.</p>
+    <button class="btn secondary" type="submit" name="publish" value="0">Guardar borrador</button>
+    <button class="btn primary" type="submit" name="publish" value="1">Publicar</button>
+    {% if article %}
+      <p class="hint">Estado: <span class="status {{ article.status }}">{{ article.status }}</span></p>
+      {% if article.status == 'published' %}<a href="/blog/{{ article.slug }}">Ver artículo</a>{% endif %}
+    {% endif %}
+  </aside>
+</form>
+<script src="{{ url_for('static', path='editor.js') }}?v={{ version }}"></script>
+{% endblock %}
