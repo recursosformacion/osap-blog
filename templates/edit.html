@@ -6,6 +6,9 @@
   <div><p class="eyebrow">Editor</p><h1>{{ 'Editar artículo' if editing else 'Nuevo artículo' }}</h1></div>
   <a class="btn secondary" href="/admin">Volver</a>
 </section>
+{% if request.query_params.get('error') == 'empty' %}
+<div class="notice error">El cuerpo está vacío. No se ha guardado el artículo; el borrador local se conserva.</div>
+{% endif %}
 <form id="article-form" class="editor-layout" method="post"
       data-draft-key="{{ article.id if editing else 'new' }}"
       data-updated-epoch="{{ article.updated_at.timestamp() if editing and article.updated_at else 0 }}"

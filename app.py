@@ -750,6 +750,9 @@ def save_article(
         len(body),
         len(clean_body),
     )
+    if not re.sub(r"<[^>]+>", "", clean_body).strip() and "<img" not in clean_body:
+        target = f"/admin/{article_id}/edit?error=empty" if article_id else "/admin/new?error=empty"
+        return RedirectResponse(target, status_code=303)
     now = utcnow()
     with db() as conn, conn.cursor() as cur:
         if article_id:
