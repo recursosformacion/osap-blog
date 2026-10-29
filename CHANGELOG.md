@@ -1,5 +1,9 @@
 # Changelog — OSAP Blog
 
+## 1.0.5 — 2026-10-29
+
+- Botones de compartir con iconos, como en la versión anterior.
+
 ## 1.0.4 — 2026-10-29
 
 - Restaurados los botones sociales de compartir en los artículos.
@@ -32,6 +36,7 @@ Primera versión estable en producción.
 - Autenticación delegada en OSAP con entrada directa desde la SPA y retorno a la administración.
 - Migración prod→prod de los artículos generales de `amigos_articles`, incluidas portadas.
 - Licencia GPL-3.0.
+
 
 
 
