@@ -24,10 +24,36 @@
   <div class="article-body">{{ body_html | safe }}</div>
 </article>
 
-<section class="article-share">
+<section class="article-share share-bar" aria-label="Compartir artículo">
+  <span class="share-label">Compartir:</span>
+  <a class="share-link" href="https://www.facebook.com/sharer/sharer.php?u={{ share_url|urlencode }}" target="_blank" rel="noopener nofollow">Facebook</a>
+  <a class="share-link" href="https://www.linkedin.com/sharing/share-offsite/?url={{ share_url|urlencode }}" target="_blank" rel="noopener nofollow">LinkedIn</a>
+  <a class="share-link" href="https://twitter.com/intent/tweet?url={{ share_url|urlencode }}&amp;text={{ article.title|urlencode }}" target="_blank" rel="noopener nofollow">X</a>
+  <a class="share-link" href="https://wa.me/?text={{ article.title|urlencode }}%20{{ share_url|urlencode }}" target="_blank" rel="noopener nofollow">WhatsApp</a>
+  <a class="share-link" href="https://t.me/share/url?url={{ share_url|urlencode }}&amp;text={{ article.title|urlencode }}" target="_blank" rel="noopener nofollow">Telegram</a>
+  <a class="share-link" href="https://www.reddit.com/submit?url={{ share_url|urlencode }}&amp;title={{ article.title|urlencode }}" target="_blank" rel="noopener nofollow">Reddit</a>
+  <a class="share-link" href="https://mastodon.social/share?text={{ article.title|urlencode }}%20{{ share_url|urlencode }}" target="_blank" rel="noopener nofollow">Mastodon</a>
+  <a class="share-link" href="mailto:?subject={{ article.title|urlencode }}&amp;body={{ share_url|urlencode }}">Email</a>
+  <button class="share-link" type="button" id="share-copy" data-url="{{ share_url }}">Copiar enlace</button>
   <a class="btn secondary" href="/feed">RSS</a>
   <a class="btn secondary" href="{{ osap_url }}">Abrir OSAP</a>
 </section>
+<script>
+  (() => {
+    const button = document.getElementById("share-copy");
+    if (!button) return;
+    button.addEventListener("click", async () => {
+      const url = button.dataset.url || window.location.href;
+      try {
+        await navigator.clipboard.writeText(url);
+        button.textContent = "Copiado";
+        window.setTimeout(() => { button.textContent = "Copiar enlace"; }, 1800);
+      } catch {
+        window.prompt("Copia este enlace", url);
+      }
+    });
+  })();
+</script>
 
 {% if related %}
 <section class="related">
