@@ -198,6 +198,26 @@
   const libraryButton = document.getElementById("library-button");
   if (libraryButton) libraryButton.addEventListener("click", openLibrary);
 
+  editor.addEventListener("paste", async (event) => {
+    const items = event.clipboardData && event.clipboardData.items;
+    if (!items) return;
+    const files = Array.from(items)
+      .filter((item) => item.kind === "file" && item.type.startsWith("image/"))
+      .map((item) => item.getAsFile())
+      .filter(Boolean);
+    if (files.length === 0) return;
+    event.preventDefault();
+    for (const file of files) {
+      announce("Subiendo imagen pegada…");
+      try {
+        const payload = await uploadImage(file);
+        insertImage(payload.url, file.name || "Imagen pegada");
+      } catch (error) {
+        announce(error.message || "No se pudo subir la imagen pegada");
+      }
+    }
+  });
+
   const draftKey = form.dataset.draftKey;
   const updatedEpoch = Number(form.dataset.updatedEpoch || 0);
   const storageKey = draftKey ? `osap.blog.draft.${draftKey}` : "";

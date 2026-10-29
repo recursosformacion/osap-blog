@@ -6,6 +6,8 @@ autenticación en OSAP Auth. No comparte tablas con osap-api.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import logging
 import math
 import os
@@ -175,6 +177,59 @@ def sanitize_html(value: str | None) -> str:
     parser.feed(value or "")
     parser.close()
     return "".join(parser.parts).strip()
+
+
+_DATA_IMAGE_RE = re.compile(
+    r"data:image/(png|jpeg|jpg|gif|webp|avif);base64,([^\"']+)",
+    re.IGNORECASE,
+)
+_IMAGE_EXTENSIONS = {
+    "png": ".png",
+    "jpeg": ".jpg",
+    "jpg": ".jpg",
+    "gif": ".gif",
+    "webp": ".webp",
+    "avif": ".avif",
+}
+
+
+def materialize_inline_images(value: str, user_id: str) -> str:
+    """Convierte imágenes pegadas como data URI en ficheros /media/."""
+
+    def replace(match: re.Match[str]) -> str:
+        image_type = match.group(1).lower()
+        payload = re.sub(r"\s+", "", match.group(2))
+        try:
+            data = base64.b64decode(payload, validate=True)
+        except (binascii.Error, ValueError):
+            return match.group(0)
+        if not data or len(data) > MAX_UPLOAD:
+            return match.group(0)
+        media_id = str(uuid.uuid4())
+        extension = _IMAGE_EXTENSIONS.get(image_type, ".img")
+        path = MEDIA_ROOT / f"{media_id}{extension}"
+        path.write_bytes(data)
+        try:
+            with db() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO media (id, filename, content_type, path, uploaded_by, created_at) "
+                    "VALUES (%s,%s,%s,%s,%s,%s)",
+                    (
+                        media_id,
+                        f"pasted-{media_id}{extension}",
+                        f"image/{image_type}",
+                        path.name,
+                        user_id,
+                        utcnow(),
+                    ),
+                )
+                conn.commit()
+        except Exception:
+            path.unlink(missing_ok=True)
+            raise
+        return f"/media/{media_id}"
+
+    return _DATA_IMAGE_RE.sub(replace, value or "")
 
 
 def slugify(value: str) -> str:
@@ -742,12 +797,14 @@ def save_article(
     title = title.strip()
     if not title:
         return RedirectResponse("/admin", status_code=303)
+    raw_body_len = len(body)
+    body = materialize_inline_images(body, str(user["user_id"]))
     clean_body = sanitize_html(body)
     LOGGER.info(
         "save article id=%s title_len=%d body_len=%d clean_len=%d",
         article_id or "new",
         len(title),
-        len(body),
+        raw_body_len,
         len(clean_body),
     )
     if not re.sub(r"<[^>]+>", "", clean_body).strip() and "<img" not in clean_body:
@@ -910,6 +967,7 @@ def moderate_comment(request: Request, comment_id: str, decision: str) -> Redire
         cur.execute("UPDATE comments SET status=%s WHERE id=%s", (decision, comment_id))
         conn.commit()
     return RedirectResponse("/admin", status_code=303)
+
 
 
 
