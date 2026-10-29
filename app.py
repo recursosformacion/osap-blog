@@ -633,7 +633,7 @@ def save_article(
 ) -> RedirectResponse:
     user = public_user(token_for(request))
     if not can_edit(user):
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse("/login?error=session", status_code=303)
     title = title.strip()
     if not title:
         return RedirectResponse("/admin", status_code=303)

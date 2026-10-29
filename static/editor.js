@@ -34,6 +34,7 @@
     editor.focus();
     document.execCommand("insertHTML", false, figure.outerHTML);
     sync();
+    scheduleDraft();
   };
 
   const uploadImage = async (file) => {
@@ -141,6 +142,7 @@
         const payload = await uploadImage(file);
         coverInput.value = payload.url;
         showCover(payload.url);
+        scheduleDraft();
         announce("Portada subida");
       } catch (error) {
         announce(error.message || "No se pudo subir la portada");
@@ -195,4 +197,68 @@
   };
   const libraryButton = document.getElementById("library-button");
   if (libraryButton) libraryButton.addEventListener("click", openLibrary);
+
+  const draftKey = form.dataset.draftKey;
+  const updatedEpoch = Number(form.dataset.updatedEpoch || 0);
+  const storageKey = draftKey ? `osap.blog.draft.${draftKey}` : "";
+  const titleInput = document.getElementById("title");
+  const summaryInput = document.getElementById("summary");
+  let draftTimer = 0;
+
+  const collectDraft = () => ({
+    ts: Math.floor(Date.now() / 1000),
+    title: titleInput ? titleInput.value : "",
+    summary: summaryInput ? summaryInput.value : "",
+    cover_url: coverInput ? coverInput.value : "",
+    body: editor.innerHTML,
+  });
+
+  const saveDraft = () => {
+    if (!storageKey) return;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(collectDraft()));
+      announce("Borrador local guardado");
+    } catch {
+      // localStorage puede estar deshabilitado; no interrumpir la edición.
+    }
+  };
+
+  const scheduleDraft = () => {
+    window.clearTimeout(draftTimer);
+    draftTimer = window.setTimeout(saveDraft, 800);
+  };
+
+  const restoreDraft = () => {
+    if (!storageKey) return;
+    let draft = null;
+    try {
+      const raw = localStorage.getItem(storageKey);
+      draft = raw ? JSON.parse(raw) : null;
+    } catch {
+      draft = null;
+    }
+    if (!draft || !draft.ts || draft.ts <= updatedEpoch + 5) return;
+    const when = new Date(draft.ts * 1000).toLocaleString();
+    if (!window.confirm(`Hay un borrador local de ${when}. ¿Restaurarlo?`)) {
+      localStorage.removeItem(storageKey);
+      return;
+    }
+    if (titleInput) titleInput.value = draft.title || "";
+    if (summaryInput) summaryInput.value = draft.summary || "";
+    if (coverInput) coverInput.value = draft.cover_url || "";
+    editor.innerHTML = draft.body || "";
+    showCover(draft.cover_url || "");
+    sync();
+    announce("Borrador local restaurado");
+  };
+
+  [titleInput, summaryInput, coverInput].forEach((field) => {
+    if (field) field.addEventListener("input", scheduleDraft);
+  });
+  editor.addEventListener("input", scheduleDraft);
+  form.addEventListener("submit", () => {
+    sync();
+    saveDraft();
+  });
+  window.setTimeout(restoreDraft, 100);
 })();

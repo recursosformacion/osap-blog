@@ -7,6 +7,8 @@
   <a class="btn secondary" href="/admin">Volver</a>
 </section>
 <form id="article-form" class="editor-layout" method="post"
+      data-draft-key="{{ article.id if editing else 'new' }}"
+      data-updated-epoch="{{ article.updated_at.timestamp() if editing and article.updated_at else 0 }}"
       action="{{ '/admin/' ~ article.id ~ '/edit' if editing else '/admin/new' }}">
   <div class="editor-main">
     <div class="card form-card">
