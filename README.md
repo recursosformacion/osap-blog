@@ -4,7 +4,7 @@ Blog independiente de OSAP.
 
 ## Estado
 
-Versión **1.0.0**, desplegada en producción. Incluye:
+Versión **1.0.1**, desplegada en producción. Incluye:
 
 - Aplicación FastAPI y plantillas Jinja.
 - Base de datos propia `osap_blog`.
@@ -126,3 +126,4 @@ en OSAP hasta que se migren expresamente.
 - Programar copias de seguridad propias de `osap_blog` y del almacén de imágenes.
 - Moderación completa, rate limit, antispam y notificaciones.
 - Añadir el blog al script de despliegue general para que la próxima release sea reproducible.
+
