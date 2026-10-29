@@ -6,9 +6,12 @@ autenticación en OSAP Auth. No comparte tablas con osap-api.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import re
+import threading
+import time
 import unicodedata
 import uuid
 from collections.abc import Iterator
@@ -38,7 +41,7 @@ from fastapi.templating import Jinja2Templates
 from pymysql.cursors import DictCursor
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.1"
 
 
 def _load_config() -> dict[str, Any]:
@@ -92,6 +95,8 @@ if not MEDIA_ROOT.is_absolute():
     MEDIA_ROOT = BASE_DIR / MEDIA_ROOT
 MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 COOKIE = "osap_blog_token"
+REFRESH_COOKIE = "osap_blog_refresh"
+LOGGER = logging.getLogger("osap-blog")
 MAX_UPLOAD = int(CONFIG["media"].get("max_bytes", 5 * 1024 * 1024))
 EDITOR_ROLES = list(CONFIG["editor"].get("roles", []))
 COMMENT_MODERATION = bool(CONFIG["editor"].get("moderation", True))
@@ -215,6 +220,41 @@ def public_user(token: str) -> dict[str, Any] | None:
     return data if data.get("user_id") else None
 
 
+_REFRESH_LOCK = threading.Lock()
+_REFRESH_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+
+
+def refresh_tokens(refresh_token: str) -> dict[str, Any] | None:
+    """Renueva la sesión en OSAP y reutiliza el resultado durante unos segundos."""
+    if not refresh_token:
+        return None
+    now = time.monotonic()
+    with _REFRESH_LOCK:
+        cached = _REFRESH_CACHE.get(refresh_token)
+        if cached and cached[0] > now:
+            return cached[1]
+        try:
+            response = httpx.post(
+                f"{AUTH_BASE}/auth/refresh",
+                json={"refresh_token": refresh_token},
+                timeout=8.0,
+            )
+        except httpx.HTTPError as exc:
+            LOGGER.warning("No se pudo renovar la sesión del blog: %s", type(exc).__name__)
+            return None
+        if response.status_code != 200:
+            LOGGER.warning("OSAP rechazó la renovación: HTTP %s", response.status_code)
+            return None
+        try:
+            data = response.json()
+        except ValueError:
+            return None
+        if not data.get("access_token") or not data.get("refresh_token"):
+            return None
+        _REFRESH_CACHE[refresh_token] = (now + 60.0, data)
+        return data
+
+
 def can_edit(user: dict[str, Any] | None) -> bool:
     if not user:
         return False
@@ -225,10 +265,15 @@ def can_edit(user: dict[str, Any] | None) -> bool:
 
 
 def token_for(request: Request) -> str:
-    return request.cookies.get(COOKIE, "")
+    return getattr(request.state, "blog_token", "") or request.cookies.get(COOKIE, "")
 
 
-def set_cookie(response: RedirectResponse, request: Request, token: str) -> None:
+def set_cookie(
+    response: Response,
+    request: Request,
+    token: str,
+    refresh_token: str = "",
+) -> None:
     response.set_cookie(
         COOKIE,
         token,
@@ -238,6 +283,16 @@ def set_cookie(response: RedirectResponse, request: Request, token: str) -> None
         samesite="lax",
         path="/",
     )
+    if refresh_token:
+        response.set_cookie(
+            REFRESH_COOKIE,
+            refresh_token,
+            max_age=30 * 24 * 3600,
+            httponly=True,
+            secure=PUBLIC_URL.startswith("https://"),
+            samesite="lax",
+            path="/",
+        )
 
 
 @contextmanager
@@ -276,6 +331,31 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="OSAP Blog", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+
+
+@app.middleware("http")
+async def renew_blog_session(request: Request, call_next):
+    path = request.url.path
+    if not (path == "/admin" or path.startswith(("/admin/", "/comments", "/auth/"))):
+        return await call_next(request)
+    access = request.cookies.get(COOKIE, "")
+    refresh = request.cookies.get(REFRESH_COOKIE, "")
+    renewed: dict[str, Any] | None = None
+    if refresh and (not access or not public_user(access)):
+        candidate = refresh_tokens(refresh)
+        if candidate and public_user(str(candidate["access_token"])):
+            renewed = candidate
+            request.state.blog_token = candidate["access_token"]
+            request.state.blog_refresh = candidate["refresh_token"]
+    response = await call_next(request)
+    if renewed:
+        set_cookie(
+            response,
+            request,
+            str(renewed["access_token"]),
+            str(renewed["refresh_token"]),
+        )
+    return response
 
 
 def render(
@@ -519,11 +599,35 @@ def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLR
 
 
 @app.get("/auth/session")
-def auth_session(request: Request, token: str = "", next: str = "/admin") -> RedirectResponse:
+def auth_session(
+    request: Request,
+    token: str = "",
+    refresh_token: str = "",
+    next: str = "/admin",
+) -> RedirectResponse:
     target = next if next.startswith("/") and not next.startswith("//") else "/admin"
     if token and public_user(token):
         response = RedirectResponse(target, status_code=303)
-        set_cookie(response, request, token)
+        set_cookie(
+            response,
+            request,
+            token,
+            refresh_token or request.cookies.get(REFRESH_COOKIE, ""),
+        )
+        return response
+    candidate = refresh_tokens(
+        refresh_token
+        or request.cookies.get(REFRESH_COOKIE, "")
+        or getattr(request.state, "blog_refresh", "")
+    )
+    if candidate and public_user(str(candidate["access_token"])):
+        response = RedirectResponse(target, status_code=303)
+        set_cookie(
+            response,
+            request,
+            str(candidate["access_token"]),
+            str(candidate["refresh_token"]),
+        )
         return response
     if token:
         return RedirectResponse("/?session=error", status_code=303)
@@ -544,6 +648,7 @@ def login_page(request: Request, error: str = "") -> HTMLResponse:
 def logout() -> RedirectResponse:
     response = RedirectResponse("/", status_code=303)
     response.delete_cookie(COOKIE, path="/")
+    response.delete_cookie(REFRESH_COOKIE, path="/")
     return response
 
 
@@ -638,6 +743,13 @@ def save_article(
     if not title:
         return RedirectResponse("/admin", status_code=303)
     clean_body = sanitize_html(body)
+    LOGGER.info(
+        "save article id=%s title_len=%d body_len=%d clean_len=%d",
+        article_id or "new",
+        len(title),
+        len(body),
+        len(clean_body),
+    )
     now = utcnow()
     with db() as conn, conn.cursor() as cur:
         if article_id:
@@ -795,6 +907,8 @@ def moderate_comment(request: Request, comment_id: str, decision: str) -> Redire
         cur.execute("UPDATE comments SET status=%s WHERE id=%s", (decision, comment_id))
         conn.commit()
     return RedirectResponse("/admin", status_code=303)
+
+
 
 
 

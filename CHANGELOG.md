@@ -1,5 +1,12 @@
 # Changelog — OSAP Blog
 
+## 1.0.1 — 2026-10-29
+
+- Autoguardado local del editor y restauración de borradores.
+- Renovación de sesión de OSAP para evitar guardados con token caducado.
+- El cuerpo del artículo se conserva aunque falle el JavaScript del editor.
+- Subida de portada, biblioteca de imágenes y URLs externas.
+
 ## 1.0.0 — 2026-10-29
 
 Primera versión estable en producción.

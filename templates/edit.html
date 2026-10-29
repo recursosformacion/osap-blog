@@ -51,7 +51,7 @@
         <span id="editor-status" class="hint"></span>
       </div>
       <div id="editor" class="editor" contenteditable="true" spellcheck="true">{{ body_html | safe }}</div>
-      <input id="body_html" name="body" type="hidden">
+      <input id="body_html" name="body" type="hidden" value="{{ body_html | e }}">
     </div>
   </div>
   <aside class="editor-side card">
@@ -72,5 +72,16 @@
   </div>
   <div id="media-grid" class="media-grid"><p class="hint">Cargando…</p></div>
 </dialog>
+<script>
+  // Fallback: aunque falle editor.js, no se envía un cuerpo vacío.
+  (() => {
+    const form = document.getElementById("article-form");
+    const editor = document.getElementById("editor");
+    const body = document.getElementById("body_html");
+    if (form && editor && body) {
+      form.addEventListener("submit", () => { body.value = editor.innerHTML; });
+    }
+  })();
+</script>
 <script src="{{ url_for('static', path='editor.js') }}?v={{ version }}"></script>
 {% endblock %}
