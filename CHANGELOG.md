@@ -1,5 +1,10 @@
 # Changelog — OSAP Blog
 
+## 1.0.2 — 2026-10-29
+
+- Imágenes pegadas desde el portapapeles se convierten en ficheros `/media/`.
+- Conversión de imágenes `data:` al guardar para no perderlas.
+
 ## 1.0.1 — 2026-10-29
 
 - Autoguardado local del editor y restauración de borradores.
@@ -18,3 +23,4 @@ Primera versión estable en producción.
 - Autenticación delegada en OSAP con entrada directa desde la SPA y retorno a la administración.
 - Migración prod→prod de los artículos generales de `amigos_articles`, incluidas portadas.
 - Licencia GPL-3.0.
+

@@ -43,7 +43,7 @@ from fastapi.templating import Jinja2Templates
 from pymysql.cursors import DictCursor
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 
 
 def _load_config() -> dict[str, Any]:
@@ -967,6 +967,7 @@ def moderate_comment(request: Request, comment_id: str, decision: str) -> Redire
         cur.execute("UPDATE comments SET status=%s WHERE id=%s", (decision, comment_id))
         conn.commit()
     return RedirectResponse("/admin", status_code=303)
+
 
 
 
