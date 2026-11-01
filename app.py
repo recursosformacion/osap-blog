@@ -453,6 +453,11 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon() -> FileResponse:
+    return FileResponse(BASE_DIR / "static" / "favicon.ico")
+
+
 @app.middleware("http")
 async def renew_blog_session(request: Request, call_next):
     path = request.url.path
