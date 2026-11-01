@@ -219,8 +219,12 @@
   });
 
   const draftKey = form.dataset.draftKey;
-  const updatedEpoch = Number(form.dataset.updatedEpoch || 0);
+  const updatedAt = form.dataset.updated ? Date.parse(form.dataset.updated) / 1000 : 0;
   const storageKey = draftKey ? `osap.blog.draft.${draftKey}` : "";
+  if (storageKey && new URLSearchParams(window.location.search).get("saved") === "1") {
+    localStorage.removeItem(storageKey);
+    localStorage.removeItem("osap.blog.draft.new");
+  }
   const titleInput = document.getElementById("title");
   const summaryInput = document.getElementById("summary");
   let draftTimer = 0;
@@ -257,7 +261,15 @@
     } catch {
       draft = null;
     }
-    if (!draft || !draft.ts || draft.ts <= updatedEpoch + 5) return;
+    if (!draft || !draft.ts) return;
+    if (draft.ts <= updatedAt + 5) {
+      localStorage.removeItem(storageKey);
+      return;
+    }
+    if (!updatedAt && draft.ts < Math.floor(Date.now() / 1000) - 24 * 3600) {
+      localStorage.removeItem(storageKey);
+      return;
+    }
     const when = new Date(draft.ts * 1000).toLocaleString();
     if (!window.confirm(`Hay un borrador local de ${when}. ¿Restaurarlo?`)) {
       localStorage.removeItem(storageKey);
@@ -282,3 +294,4 @@
   });
   window.setTimeout(restoreDraft, 100);
 })();
+

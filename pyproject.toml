@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "osap-blog"
-version = "1.0.5"
+version = "1.0.6"
 description = "Blog independiente de OpenMusicRepository (OSAP)"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,6 +24,7 @@ dev = ["pytest>=8,<9", "ruff>=0.6,<1"]
 
 [tool.setuptools]
 py-modules = ["app"]
+
 
 
 

@@ -11,7 +11,7 @@
 {% endif %}
 <form id="article-form" class="editor-layout" method="post"
       data-draft-key="{{ article.id if editing else 'new' }}"
-      data-updated-epoch="{{ article.updated_at.timestamp() if editing and article.updated_at else 0 }}"
+      data-updated="{{ (article.updated_at.isoformat() ~ 'Z') if editing and article.updated_at else '' }}"
       action="{{ '/admin/' ~ article.id ~ '/edit' if editing else '/admin/new' }}">
   <div class="editor-main">
     <div class="card form-card">
@@ -88,3 +88,4 @@
 </script>
 <script src="{{ url_for('static', path='editor.js') }}?v={{ version }}"></script>
 {% endblock %}
+

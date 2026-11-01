@@ -1,5 +1,10 @@
 # Changelog — OSAP Blog
 
+## 1.0.6 — 2026-11-01
+
+- Logout de OSAP propagado al blog.
+- Limpieza de borradores locales tras guardar y descarte de borradores antiguos.
+
 ## 1.0.5 — 2026-10-29
 
 - Botones de compartir con iconos, como en la versión anterior.
@@ -36,6 +41,7 @@ Primera versión estable en producción.
 - Autenticación delegada en OSAP con entrada directa desde la SPA y retorno a la administración.
 - Migración prod→prod de los artículos generales de `amigos_articles`, incluidas portadas.
 - Licencia GPL-3.0.
+
 
 
 

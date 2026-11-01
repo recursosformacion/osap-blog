@@ -49,7 +49,7 @@ from pymysql.cursors import DictCursor
 from share_icons import share_targets
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
 
 
 def _load_config() -> dict[str, Any]:
@@ -785,8 +785,16 @@ def login_page(request: Request, error: str = "") -> HTMLResponse:
 
 
 @app.get("/logout")
-def logout(request: Request) -> RedirectResponse:
-    response = RedirectResponse("/", status_code=303)
+def logout(request: Request, next: str = "/") -> RedirectResponse:
+    target = "/"
+    if next.startswith("/") and not next.startswith("//"):
+        target = next
+    else:
+        parsed = urlparse(next)
+        allowed = {urlparse(OSAP_URL).netloc, urlparse(PUBLIC_URL).netloc}
+        if parsed.scheme in {"http", "https"} and parsed.netloc in allowed:
+            target = next
+    response = RedirectResponse(target, status_code=303)
     response.delete_cookie(COOKIE, path="/")
     response.delete_cookie(REFRESH_COOKIE, path="/")
     response.delete_cookie(SESSION_COOKIE, path="/")
@@ -945,7 +953,7 @@ def save_article(
                 ),
             )
         conn.commit()
-    return RedirectResponse(f"/admin/{article_id}/edit", status_code=303)
+    return RedirectResponse(f"/admin/{article_id}/edit?saved=1", status_code=303)
 
 
 @app.post("/admin/new")
@@ -1053,6 +1061,8 @@ def moderate_comment(request: Request, comment_id: str, decision: str) -> Redire
         cur.execute("UPDATE comments SET status=%s WHERE id=%s", (decision, comment_id))
         conn.commit()
     return RedirectResponse("/admin", status_code=303)
+
+
 
 
 
