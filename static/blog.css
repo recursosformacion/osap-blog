@@ -98,6 +98,17 @@ h2 { margin: 0 0 12px; font-size: 21px; }
 .article-body blockquote { margin: 1.2rem 0; padding: 8px 18px; border-left: 3px solid var(--green); color: var(--muted); }
 .article-body a { text-decoration: underline; }
 .article-body p { margin: 0 0 1.1em; }
+.article-body details { margin: 1.1rem 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.article-body summary { cursor: pointer; font-weight: 650; }
+.article-body details[open] summary { margin-bottom: 8px; }
+.article-body figure.media-25 { width: 25%; max-width: 25%; }
+.article-body figure.media-50 { width: 50%; max-width: 50%; }
+.article-body figure.media-75 { width: 75%; max-width: 75%; }
+.article-body figure.media-100 { width: 100%; max-width: 100%; }
+.article-body figure.media-25 img,
+.article-body figure.media-50 img,
+.article-body figure.media-75 img,
+.article-body figure.media-100 img { width: 100%; }
 .comments { max-width: 800px; margin: 0 auto; }
 .comment { border-top: 1px solid var(--line); padding: 14px 0; }
 .comment-meta { color: var(--muted); font-size: 12px; margin: 0 0 5px; }
@@ -142,6 +153,16 @@ th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spa
 .editor figure.align-right { float: right; max-width: 46%; margin: .4rem 0 1rem 1.5rem; }
 .editor figure.align-center { margin-left: auto; margin-right: auto; text-align: center; }
 .editor img { max-width: 100%; }
+.editor details { margin: 1rem 0; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: #fff; }
+.editor summary { cursor: pointer; font-weight: 650; }
+.editor figure.media-25 { width: 25%; max-width: 25%; }
+.editor figure.media-50 { width: 50%; max-width: 50%; }
+.editor figure.media-75 { width: 75%; max-width: 75%; }
+.editor figure.media-100 { width: 100%; max-width: 100%; }
+.editor figure.media-25 img,
+.editor figure.media-50 img,
+.editor figure.media-75 img,
+.editor figure.media-100 img { width: 100%; }
 .cover-picker { display: flex; gap: 8px; align-items: center; }
 .cover-picker input { flex: 1; min-width: 0; }
 .cover-preview-wrap { display: flex; align-items: flex-end; gap: 10px; margin-top: 10px; }

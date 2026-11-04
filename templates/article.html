@@ -1,6 +1,9 @@
 {% extends "base.html" %}
 {% block title %}{{ article.title }} · {{ site_name }}{% endblock %}
 {% block og_title %}{{ article.title }}{% endblock %}
+{% block structured_data %}
+  {% if faq_json %}<script type="application/ld+json">{{ faq_json | safe }}</script>{% endif %}
+{% endblock %}
 {% block crumbs %} / <a href="/blog/{{ article.slug }}">{{ article.title }}</a>{% endblock %}
 {% block social %}
   {% if og_image %}<meta property="og:image" content="{{ og_image }}">{% endif %}

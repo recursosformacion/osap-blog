@@ -10,6 +10,7 @@ import base64
 import binascii
 import hashlib
 import hmac
+import io
 import json
 import logging
 import math
@@ -44,12 +45,13 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from PIL import Image, ImageOps, UnidentifiedImageError
 from pymysql.cursors import DictCursor
 
 from share_icons import share_targets
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.1.0"
 
 
 def _load_config() -> dict[str, Any]:
@@ -112,16 +114,22 @@ SESSION_SECRET = (
 )
 LOGGER = logging.getLogger("osap-blog")
 MAX_UPLOAD = int(CONFIG["media"].get("max_bytes", 5 * 1024 * 1024))
+IMAGE_MAX_DIMENSION = int(CONFIG["media"].get("max_dimension", 2000))
+IMAGE_WEBP_QUALITY = int(CONFIG["media"].get("webp_quality", 88))
+Image.MAX_IMAGE_PIXELS = 40_000_000
 EDITOR_ROLES = list(CONFIG["editor"].get("roles", []))
 COMMENT_MODERATION = bool(CONFIG["editor"].get("moderation", True))
 
 ALLOWED_TAGS = {
     "p", "br", "strong", "b", "em", "i", "u", "s", "ul", "ol", "li",
     "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "a", "hr",
-    "figure", "figcaption", "img", "div", "span",
+    "figure", "figcaption", "img", "div", "span", "details", "summary",
 }
 VOID_TAGS = {"br", "hr", "img"}
-CLASSES = {"align-left", "align-right", "align-center", "media-wide"}
+CLASSES = {
+    "align-left", "align-right", "align-center", "media-wide",
+    "media-25", "media-50", "media-75", "media-100",
+}
 
 
 class BlogSanitizer(HTMLParser):
@@ -191,25 +199,111 @@ def sanitize_html(value: str | None) -> str:
     return "".join(parser.parts).strip()
 
 
+class _FaqExtractor(HTMLParser):
+    """Extract visible details/summary pairs for server-side FAQPage JSON-LD."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.items: list[dict[str, str]] = []
+        self.current: dict[str, list[str]] | None = None
+        self.in_summary = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if tag == "details" and self.current is None:
+            self.current = {"question": [], "answer": []}
+        elif tag == "summary" and self.current is not None:
+            self.in_summary = True
+        elif self.current is not None and tag in {"p", "li", "blockquote", "br"}:
+            self.current["answer"].append(" ")
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if tag == "summary":
+            self.in_summary = False
+        elif tag == "details" and self.current is not None:
+            question = re.sub(r"\s+", " ", " ".join(self.current["question"])).strip()
+            answer = re.sub(r"\s+", " ", " ".join(self.current["answer"])).strip()
+            if question and answer:
+                self.items.append({"question": question, "answer": answer})
+            self.current = None
+            self.in_summary = False
+
+    def handle_data(self, data: str) -> None:
+        if self.current is None:
+            return
+        key = "question" if self.in_summary else "answer"
+        self.current[key].append(data)
+
+
+def faq_schema_json(body_html: str) -> str:
+    parser = _FaqExtractor()
+    parser.feed(body_html)
+    parser.close()
+    if not parser.items:
+        return ""
+    payload = {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+            {
+                "@type": "Question",
+                "name": item["question"],
+                "acceptedAnswer": {"@type": "Answer", "text": item["answer"]},
+            }
+            for item in parser.items
+        ],
+    }
+    # The JSON is inserted inside <script>; prevent a literal </script> from
+    # closing the tag if an editor writes it in a question or answer.
+    return json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
+
+
 _DATA_IMAGE_RE = re.compile(
-    r"data:image/(png|jpeg|jpg|gif|webp|avif);base64,([^\"']+)",
+    r"data:image/(png|jpeg|jpg|jfif|gif|webp|avif);base64,([^\"']+)",
     re.IGNORECASE,
 )
-_IMAGE_EXTENSIONS = {
-    "png": ".png",
-    "jpeg": ".jpg",
-    "jpg": ".jpg",
-    "gif": ".gif",
-    "webp": ".webp",
-    "avif": ".avif",
-}
+
+
+class ImageProcessingError(ValueError):
+    """The uploaded image could not be decoded or optimized."""
+
+
+def optimize_image(data: bytes) -> tuple[bytes, str]:
+    """Return a browser-friendly, size-bounded WebP image (or an animated original)."""
+    try:
+        with Image.open(io.BytesIO(data)) as source:
+            source.load()
+            if getattr(source, "is_animated", False) and source.format == "GIF":
+                return data, "image/gif"
+            image = ImageOps.exif_transpose(source)
+            if max(image.size) > IMAGE_MAX_DIMENSION:
+                image.thumbnail(
+                    (IMAGE_MAX_DIMENSION, IMAGE_MAX_DIMENSION),
+                    Image.Resampling.LANCZOS,
+                )
+            has_alpha = image.mode in {"RGBA", "LA"} or "transparency" in image.info
+            if has_alpha:
+                image = image.convert("RGBA")
+            else:
+                image = image.convert("RGB")
+            output = io.BytesIO()
+            image.save(
+                output,
+                format="WEBP",
+                quality=IMAGE_WEBP_QUALITY,
+                method=6,
+                lossless=has_alpha or source.format == "PNG",
+            )
+            return output.getvalue(), "image/webp"
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError) as exc:
+        raise ImageProcessingError("La imagen no se pudo procesar") from exc
 
 
 def materialize_inline_images(value: str, user_id: str) -> str:
     """Convierte imágenes pegadas como data URI en ficheros /media/."""
 
     def replace(match: re.Match[str]) -> str:
-        image_type = match.group(1).lower()
         payload = re.sub(r"\s+", "", match.group(2))
         try:
             data = base64.b64decode(payload, validate=True)
@@ -217,10 +311,14 @@ def materialize_inline_images(value: str, user_id: str) -> str:
             return match.group(0)
         if not data or len(data) > MAX_UPLOAD:
             return match.group(0)
+        try:
+            optimized, content_type = optimize_image(data)
+        except ImageProcessingError:
+            return match.group(0)
+        extension = ".gif" if content_type == "image/gif" else ".webp"
         media_id = str(uuid.uuid4())
-        extension = _IMAGE_EXTENSIONS.get(image_type, ".img")
         path = MEDIA_ROOT / f"{media_id}{extension}"
-        path.write_bytes(data)
+        path.write_bytes(optimized)
         try:
             with db() as conn, conn.cursor() as cur:
                 cur.execute(
@@ -229,7 +327,7 @@ def materialize_inline_images(value: str, user_id: str) -> str:
                     (
                         media_id,
                         f"pasted-{media_id}{extension}",
-                        f"image/{image_type}",
+                        content_type,
                         path.name,
                         user_id,
                         utcnow(),
@@ -712,11 +810,13 @@ def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLR
         "pending": "Comentario recibido; quedará visible tras moderación.",
         "ok": "Comentario publicado.",
     }.get(comment_status, "")
+    clean_body = sanitize_html(article["body_html"])
     return render(
         request,
         "article.html",
         article=article,
-        body_html=sanitize_html(article["body_html"]),
+        body_html=clean_body,
+        faq_json=faq_schema_json(clean_body),
         comments=comments,
         related=related,
         notice=notice,
@@ -1028,18 +1128,26 @@ def upload_media(
     data = image.file.read(MAX_UPLOAD + 1)
     if len(data) > MAX_UPLOAD:
         return JSONResponse({"error": "Imagen demasiado grande"}, status_code=413)
-    extension = {
-        "image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp",
-        "image/gif": ".gif",
-    }.get(content_type, ".bin")
+    try:
+        optimized, output_type = optimize_image(data)
+    except ImageProcessingError:
+        return JSONResponse({"error": "No se pudo procesar la imagen"}, status_code=400)
+    extension = ".gif" if output_type == "image/gif" else ".webp"
     media_id = str(uuid.uuid4())
     path = MEDIA_ROOT / f"{media_id}{extension}"
-    path.write_bytes(data)
+    path.write_bytes(optimized)
     with db() as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO media (id, filename, content_type, path, uploaded_by, created_at) "
             "VALUES (%s,%s,%s,%s,%s,%s)",
-            (media_id, image.filename or path.name, content_type, path.name, str(user["user_id"]), utcnow()),
+            (
+                media_id,
+                image.filename or path.name,
+                output_type,
+                path.name,
+                str(user["user_id"]),
+                utcnow(),
+            ),
         )
         conn.commit()
     return JSONResponse({"url": f"/media/{media_id}", "id": media_id})

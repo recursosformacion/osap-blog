@@ -100,6 +100,53 @@
     button.addEventListener("click", () => alignImage(button.dataset.align));
   });
 
+  const selectedFigure = () => {
+    const selection = window.getSelection();
+    let node = selection && selection.anchorNode;
+    while (node && node !== editor && !(node instanceof HTMLImageElement) && !(node instanceof HTMLElement && node.tagName === "FIGURE")) {
+      node = node.parentNode;
+    }
+    if (!node || node === editor) return null;
+    const figure = node instanceof HTMLImageElement ? node.closest("figure") : node;
+    if (figure && figure.tagName === "FIGURE") return figure;
+    const image = node instanceof HTMLImageElement ? node : node.querySelector("img");
+    if (!image) return null;
+    const wrapper = document.createElement("figure");
+    image.replaceWith(wrapper);
+    wrapper.appendChild(image);
+    return wrapper;
+  };
+
+  const sizeImage = (className) => {
+    const figure = selectedFigure();
+    if (!figure) {
+      announce("Selecciona una imagen");
+      return;
+    }
+    figure.classList.remove("media-25", "media-50", "media-75", "media-100");
+    figure.classList.add(className);
+    sync();
+    scheduleDraft();
+  };
+
+  document.querySelectorAll("[data-size]").forEach((button) => {
+    button.addEventListener("click", () => sizeImage(button.dataset.size));
+  });
+
+  const faqButton = document.getElementById("faq-button");
+  if (faqButton) {
+    faqButton.addEventListener("click", () => {
+      editor.focus();
+      document.execCommand(
+        "insertHTML",
+        false,
+        "<details><summary>¿Pregunta?</summary><p>Respuesta visible.</p></details><p><br></p>",
+      );
+      sync();
+      scheduleDraft();
+    });
+  }
+
   if (imageButton && imageInput) {
     imageButton.addEventListener("click", () => imageInput.click());
     imageInput.addEventListener("change", async () => {

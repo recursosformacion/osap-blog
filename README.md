@@ -4,7 +4,7 @@ Blog independiente de OSAP.
 
 ## Estado
 
-Versión **1.0.6**, desplegada en producción. Incluye:
+Versión **1.1.0**, desplegada en producción. Incluye:
 
 - Aplicación FastAPI y plantillas Jinja.
 - Base de datos propia `osap_blog`.
@@ -81,6 +81,12 @@ URL de entrada.
 - `editor.roles: []` permite editar a cualquier usuario autenticado, útil en desarrollo.
 - En producción debe listar roles como `admin`, `editor` o `blog_admin`.
 - `editor.moderation: true` deja los comentarios pendientes de aprobación.
+
+## FAQ e imágenes
+
+El editor incluye un botón **FAQ** que inserta bloques `details/summary`. Al publicar, el servidor extrae esas preguntas y respuestas y añade un único `FAQPage` JSON-LD al artículo. Las respuestas deben ser visibles y coincidir con el texto del schema.
+
+Las imágenes subidas o pegadas se convierten a WebP, se limitan a `media.max_dimension` (2000 px por defecto) y se guardan con `media.webp_quality` (88 por defecto). Los GIF animados se conservan. En el editor, los botones **25% / 50% / 75% / 100%** cambian el tamaño de presentación de la imagen seleccionada; no reescalan el archivo original. WebP reduce peso y artefactos de compresión, pero no puede recuperar nitidez perdida en una imagen de origen pequeña o borrosa.
 
 ## Rutas
 

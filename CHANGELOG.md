@@ -1,5 +1,12 @@
 # Changelog — OSAP Blog
 
+## 1.1.0 — 2026-11-04
+
+- Editor FAQ con `details/summary` y generación automática de `FAQPage` JSON-LD.
+- Escalado visual de imágenes al 25/50/75/100% desde el editor.
+- Conversión de imágenes JPEG/JFIF a WebP y limitación de dimensión máxima.
+- Conservación de GIF animados y WebP sin pérdida para PNG/transparencias.
+
 ## 1.0.6 — 2026-11-01
 
 - Logout de OSAP propagado al blog.

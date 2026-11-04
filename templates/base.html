@@ -9,6 +9,7 @@
   <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
   <meta name="description" content="{{ description|default(site_description) }}">
   <link rel="canonical" href="{{ canonical }}">
+  {% block structured_data %}{% endblock %}
   <link rel="alternate" type="application/rss+xml" title="{{ site_name }}" href="{{ feed_url }}">
   <meta property="og:site_name" content="{{ site_name }}">
   <meta property="og:type" content="{{ og_type|default('website') }}">

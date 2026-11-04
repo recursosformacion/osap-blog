@@ -23,6 +23,8 @@ osap:
 media:
   root: data/media
   max_bytes: 5242880
+  max_dimension: 2000
+  webp_quality: 88
 
 editor:
   roles: []
