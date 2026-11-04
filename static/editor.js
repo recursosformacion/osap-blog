@@ -136,14 +136,15 @@
   const faqButton = document.getElementById("faq-button");
   if (faqButton) {
     faqButton.addEventListener("click", () => {
-      editor.focus();
-      document.execCommand(
-        "insertHTML",
-        false,
+      // Append at the editor root: inserting at the caret inside an existing
+      // <details> would nest FAQ blocks and break the accordion.
+      editor.insertAdjacentHTML(
+        "beforeend",
         "<details><summary>¿Pregunta?</summary><p>Respuesta visible.</p></details><p><br></p>",
       );
       sync();
       scheduleDraft();
+      announce("Bloque FAQ añadido al final");
     });
   }
 

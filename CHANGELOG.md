@@ -1,5 +1,9 @@
 # Changelog — OSAP Blog
 
+## 1.1.1 — 2026-11-04
+
+- El botón FAQ añade el bloque al final del artículo; evita anidar `details` al insertarlo con el cursor dentro de una FAQ existente.
+
 ## 1.1.0 — 2026-11-04
 
 - Editor FAQ con `details/summary` y generación automática de `FAQPage` JSON-LD.

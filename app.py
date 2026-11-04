@@ -51,7 +51,7 @@ from pymysql.cursors import DictCursor
 from share_icons import share_targets
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 
 
 def _load_config() -> dict[str, Any]:
