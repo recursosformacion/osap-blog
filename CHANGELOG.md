@@ -1,5 +1,18 @@
 # Changelog — OSAP Blog
 
+## 1.2.1 — 2026-11-10
+
+- Cabecera móvil de tres filas (marca y sesión, navegación, búsqueda) y cabecera no fija en
+  pantallas estrechas.
+- Eliminado el buscador duplicado de la portada: la búsqueda vive en la cabecera.
+- Los anuncios verticales con imagen llenan la tarjeta sin superponer texto.
+
+## 1.2.0 — 2026-11-10
+
+- Navegación movida de la barra lateral a una cabecera superior única.
+- Columna derecha con anuncio vertical 160×600 sticky; se oculta por debajo de 1000 px.
+- Proxy `/ads/compose` hacia la fachada de OSAP, con anuncio propio como respaldo.
+
 ## 1.1.1 — 2026-11-04
 
 - El botón FAQ añade el bloque al final del artículo; evita anidar `details` al insertarlo con el cursor dentro de una FAQ existente.

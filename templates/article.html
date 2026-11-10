@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}{{ article.title }} · {{ site_name }}{% endblock %}
+{% block page_type %}blog_article{% endblock %}
 {% block og_title %}{{ article.title }}{% endblock %}
 {% block structured_data %}
   {% if faq_json %}<script type="application/ld+json">{{ faq_json | safe }}</script>{% endif %}

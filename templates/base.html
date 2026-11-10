@@ -18,54 +18,66 @@
   <meta property="og:url" content="{{ canonical }}">
   {% block social %}{% endblock %}
   <link rel="stylesheet" href="{{ url_for('static', path='blog.css') }}?v={{ version }}">
+  <script src="{{ url_for('static', path='ads.js') }}?v={{ version }}" defer></script>
 </head>
 <body>
 <div class="shell">
-  <aside class="sidebar">
-    <a class="brand" href="/">
-      <span class="mark">B</span>
-      <span><strong>BLOG</strong><small>OSAP</small></span>
-    </a>
-    <form class="side-search" method="get" action="/buscar" role="search">
-      <label class="sr-only" for="side-q">Buscar en el blog</label>
-      <input id="side-q" type="search" name="q" value="{{ q|default('') }}" placeholder="Buscar…">
-    </form>
-    <nav>
-      <a href="/">Últimos artículos</a>
-      <a href="/archivo">Archivo</a>
-      <a href="/feed">Feed RSS</a>
-      <a href="{{ osap_url }}">Abrir OSAP</a>
-      {% if can_edit %}<a href="/admin">Administración</a>{% endif %}
-      {% if user %}
-        <a href="/logout">Salir</a>
-      {% else %}
-        <a href="{{ login_url }}">Entrar con OSAP</a>
-      {% endif %}
-    </nav>
-    <p class="side-note">Blog independiente de OSAP. La portada y los artículos son públicos; solo la edición y los comentarios piden sesión.</p>
-  </aside>
-  <main>
-    <header class="topbar">
-      <span class="crumbs"><a href="/">Blog</a>{% block crumbs %}{% endblock %}</span>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="/">
+        <span class="mark">B</span>
+        <span><strong>BLOG</strong><small>OSAP</small></span>
+      </a>
+      <nav class="main-nav" aria-label="Navegación principal">
+        <a href="/" {% if request.url.path == '/' %}aria-current="page"{% endif %}>Últimos artículos</a>
+        <a href="/archivo" {% if request.url.path.startswith('/archivo') %}aria-current="page"{% endif %}>Archivo</a>
+        <a href="/feed">Feed RSS</a>
+        <a href="{{ osap_url }}">Abrir OSAP</a>
+        {% if can_edit %}<a href="/admin">Administración</a>{% endif %}
+      </nav>
+      <form class="header-search" method="get" action="/buscar" role="search">
+        <label class="sr-only" for="side-q">Buscar en el blog</label>
+        <input id="side-q" type="search" name="q" value="{{ q|default('') }}" placeholder="Buscar…">
+      </form>
       <span class="session">
         {% if user %}
           <span class="dot"></span>{{ user_name }}
-          {% if can_edit %}<a class="btn secondary" href="/admin">Administración</a>{% endif %}
+          <a class="btn secondary" href="/logout">Salir</a>
         {% else %}
           <span>Lectura pública</span>
           <a class="btn primary" href="{{ login_url }}">Entrar con OSAP</a>
         {% endif %}
       </span>
-    </header>
-    <div class="content">
-      {% if session_error %}
-      <div class="notice error">
-        La sesión de OSAP no se pudo transferir. Pulsa <a href="{{ login_url }}">Entrar con OSAP</a> para reintentarlo.
-      </div>
-      {% endif %}
-      {% block content %}{% endblock %}
     </div>
-  </main>
+  </header>
+
+  <div class="layout">
+    <main class="main">
+      <div class="context-bar">
+        <span class="crumbs"><a href="/">Blog</a>{% block crumbs %}{% endblock %}</span>
+        {% if can_edit %}<a class="btn secondary" href="/admin">Administración</a>{% endif %}
+      </div>
+      <div class="content">
+        {% if session_error %}
+        <div class="notice error">
+          La sesión de OSAP no se pudo transferir. Pulsa <a href="{{ login_url }}">Entrar con OSAP</a> para reintentarlo.
+        </div>
+        {% endif %}
+        {% block content %}{% endblock %}
+      </div>
+      <p class="site-foot">Blog independiente de OSAP. La portada y los artículos son públicos; solo la edición y los comentarios piden sesión.</p>
+    </main>
+
+    <aside class="ad-rail" aria-label="Publicidad">
+      <div class="ad-slot ad-tall" data-ad data-ad-placement="sidebar" data-page-type="{% block page_type %}blog_index{% endblock %}" hidden>
+        <a href="{{ osap_url }}" target="_blank" rel="noopener noreferrer">
+          <span class="ad-kicker">OSAP</span>
+          <strong>OpenMusicRepository</strong>
+          <span>Partituras abiertas, obras y recursos musicales.</span>
+        </a>
+      </div>
+    </aside>
+  </div>
 </div>
 </body>
 </html>

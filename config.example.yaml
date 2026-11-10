@@ -19,6 +19,8 @@ auth:
 
 osap:
   public_url: http://osap-app
+  # Fachada interna de OSAP para componer anuncios (servidor a servidor).
+  api_url: http://127.0.0.1:8001/api/v1
 
 media:
   root: data/media

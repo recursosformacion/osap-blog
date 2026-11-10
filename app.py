@@ -51,7 +51,7 @@ from pymysql.cursors import DictCursor
 from share_icons import share_targets
 
 BASE_DIR = Path(__file__).resolve().parent
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.2.1"
 
 
 def _load_config() -> dict[str, Any]:
@@ -83,6 +83,9 @@ def _load_config() -> dict[str, Any]:
     data["osap"]["public_url"] = os.environ.get(
         "OSAP_PUBLIC_URL", data["osap"].get("public_url", "http://osap-app")
     ).rstrip("/")
+    data["osap"]["api_url"] = os.environ.get(
+        "OSAP_API_URL", data["osap"].get("api_url", "http://127.0.0.1:8001/api/v1")
+    ).rstrip("/")
     data["media"]["root"] = os.environ.get(
         "OSAP_BLOG_MEDIA_ROOT", data["media"].get("root", "data/media")
     )
@@ -94,6 +97,7 @@ DB = CONFIG["db"]
 AUTH_BASE = CONFIG["auth"]["base_url"]
 PUBLIC_URL = CONFIG["server"]["public_url"]
 OSAP_URL = CONFIG["osap"]["public_url"]
+OSAP_API_BASE = str(CONFIG["osap"]["api_url"]).rstrip("/")
 SITE_NAME = str(CONFIG["server"]["site_name"])
 SITE_DESCRIPTION = str(CONFIG["server"]["site_description"])
 try:
@@ -635,6 +639,21 @@ def health() -> dict[str, str]:
         cur.execute("SELECT 1")
         cur.fetchone()
     return {"status": "ok", "version": APP_VERSION}
+
+
+@app.post("/ads/compose")
+async def ads_compose(request: Request) -> Response:
+    """Proxy público a ai_publicidad vía OSAP; el token interno no llega al navegador."""
+    try:
+        payload = await request.json()
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            response = await client.post(f"{OSAP_API_BASE}/ads/compose", json=payload)
+    except (httpx.HTTPError, ValueError):
+        return Response(status_code=204)
+    content_type = response.headers.get("content-type", "")
+    if response.status_code != 200 or "text/html" not in content_type:
+        return Response(status_code=204)
+    return Response(content=response.text, media_type="text/html; charset=utf-8")
 
 
 @app.get("/", response_class=HTMLResponse)

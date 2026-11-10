@@ -4,8 +4,11 @@ Blog independiente de OSAP.
 
 ## Estado
 
-Versión **1.1.1**, desplegada en producción. Incluye:
+Versión **1.2.1**, desplegada en producción. Incluye:
 
+- Navegación en cabecera superior y columna derecha con anuncio vertical fijo (160×600),
+  oculta por debajo de 1000 px.
+- Proxy `/ads/compose` hacia la fachada de OSAP; el token de servicio no llega al navegador.
 - Aplicación FastAPI y plantillas Jinja.
 - Base de datos propia `osap_blog`.
 - Almacén de imágenes propio (`data/media`).
