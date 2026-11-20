@@ -99,6 +99,7 @@ Las imágenes subidas o pegadas se convierten a WebP, se limitan a `media.max_di
 - `GET /feed` — RSS 2.0 de los últimos 20 artículos.
 - `GET /sitemap.xml`, `GET /robots.txt` — SEO.
 - `GET /blog/{slug}` — artículo y comentarios aprobados.
+- `POST /auth/session` — handoff de sesión de OSAP en el cuerpo del formulario.
 - `POST /comments` — comentario autenticado.
 - `GET /admin` — panel, artículos y moderación.
 - `GET /admin/new`, `GET /admin/{id}/edit` — editor.
