@@ -165,7 +165,7 @@ def test_auth_session_rejects_backslash_open_redirect(monkeypatch) -> None:
         _request_with_cookies(""),
         access_token="valid-access-token",
         refresh_token="",
-        next="/\\\\evil.example",
+        next="/\\evil.example",
     )
 
     assert response.headers["location"] == "/admin"
@@ -174,7 +174,7 @@ def test_auth_session_rejects_backslash_open_redirect(monkeypatch) -> None:
 def test_logout_rejects_backslash_open_redirect() -> None:
     response = blog_app.logout(
         _request_with_cookies(""),
-        next="/\\\\evil.example",
+        next="/\\evil.example",
     )
 
     assert response.headers["location"] == "/"
