@@ -154,6 +154,32 @@ def test_refresh_cache_reuses_rotated_pair_without_second_auth_call(monkeypatch)
     assert len(calls) == 1
 
 
+def test_auth_session_rejects_backslash_open_redirect(monkeypatch) -> None:
+    monkeypatch.setattr(
+        blog_app,
+        "public_user",
+        lambda _token: {"user_id": "user-1", "roles": ["admin"]},
+    )
+
+    response = blog_app.auth_session(
+        _request_with_cookies(""),
+        access_token="valid-access-token",
+        refresh_token="",
+        next="/\\\\evil.example",
+    )
+
+    assert response.headers["location"] == "/admin"
+
+
+def test_logout_rejects_backslash_open_redirect() -> None:
+    response = blog_app.logout(
+        _request_with_cookies(""),
+        next="/\\\\evil.example",
+    )
+
+    assert response.headers["location"] == "/"
+
+
 def test_refresh_cache_does_not_reuse_expired_entry(monkeypatch) -> None:
     blog_app._REFRESH_CACHE.clear()
     blog_app._REFRESH_CACHE["old-refresh"] = (
