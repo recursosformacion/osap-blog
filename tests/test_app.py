@@ -154,6 +154,35 @@ def test_refresh_cache_reuses_rotated_pair_without_second_auth_call(monkeypatch)
     assert len(calls) == 1
 
 
+def test_refresh_cache_does_not_reuse_expired_entry(monkeypatch) -> None:
+    blog_app._REFRESH_CACHE.clear()
+    blog_app._REFRESH_CACHE["old-refresh"] = (
+        10.0,
+        {"access_token": "expired-access", "refresh_token": "expired-refresh"},
+    )
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"access_token": "new-access", "refresh_token": "new-refresh"}
+
+    def fake_post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(blog_app.time, "monotonic", lambda: 20.0)
+    monkeypatch.setattr(blog_app.httpx, "post", fake_post)
+
+    result = blog_app.refresh_tokens("old-refresh")
+
+    assert result == {"access_token": "new-access", "refresh_token": "new-refresh"}
+    assert len(calls) == 1
+    blog_app._REFRESH_CACHE.clear()
+
+
 def test_refresh_cache_expires_entries_and_is_bounded(monkeypatch) -> None:
     blog_app._REFRESH_CACHE.clear()
     blog_app._REFRESH_CACHE["expired"] = (10.0, {"access_token": "a", "refresh_token": "b"})
