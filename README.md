@@ -81,8 +81,8 @@ URL de entrada.
 
 `config.yaml`:
 
-- `editor.roles: []` permite editar a cualquier usuario autenticado, útil en desarrollo.
-- En producción debe listar roles como `admin`, `editor` o `blog_admin`.
+- `editor.roles: []` deniega la edición a todos los usuarios (fallo seguro).
+- Para habilitar edición deben configurarse explícitamente roles como `admin`, `editor` o `blog_admin`.
 - `editor.moderation: true` deja los comentarios pendientes de aprobación.
 
 ## FAQ e imágenes
