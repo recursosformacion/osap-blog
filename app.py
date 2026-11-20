@@ -937,6 +937,40 @@ def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLR
     )
 
 
+def _is_osap_handoff_origin(request: Request) -> bool:
+    """Allow session handoff only from the configured public OSAP origin."""
+    origin = request.headers.get("origin", "").strip()
+    configured = urlparse(OSAP_URL)
+    supplied = urlparse(origin)
+    if (
+        not origin
+        or supplied.scheme not in {"http", "https"}
+        or not supplied.hostname
+        or supplied.username
+        or supplied.password
+        or supplied.path not in {"", "/"}
+        or supplied.query
+        or supplied.fragment
+        or configured.scheme not in {"http", "https"}
+        or not configured.hostname
+        or configured.username
+        or configured.password
+    ):
+        return False
+    try:
+        supplied_port = supplied.port
+        configured_port = configured.port
+    except ValueError:
+        return False
+    supplied_port = supplied_port or (443 if supplied.scheme == "https" else 80)
+    configured_port = configured_port or (443 if configured.scheme == "https" else 80)
+    return (
+        supplied.scheme.lower() == configured.scheme.lower()
+        and supplied.hostname.lower() == configured.hostname.lower()
+        and supplied_port == configured_port
+    )
+
+
 @app.post("/auth/session")
 def auth_session(
     request: Request,
@@ -945,6 +979,8 @@ def auth_session(
     next: str = Form(default="/admin"),
 ) -> RedirectResponse:
     """Accept the OSAP session handoff in a POST body, never in a URL."""
+    if not _is_osap_handoff_origin(request):
+        raise HTTPException(status_code=403, detail="Origen de handoff no autorizado")
     target = _safe_local_redirect(next, "/admin")
     user = public_user(access_token) if access_token else None
     if access_token and user:
