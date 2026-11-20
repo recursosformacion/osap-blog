@@ -867,21 +867,22 @@ def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLR
     )
 
 
-@app.get("/auth/session")
+@app.post("/auth/session")
 def auth_session(
     request: Request,
-    token: str = "",
-    refresh_token: str = "",
-    next: str = "/admin",
+    access_token: str = Form(default=""),
+    refresh_token: str = Form(default=""),
+    next: str = Form(default="/admin"),
 ) -> RedirectResponse:
+    """Accept the OSAP session handoff in a POST body, never in a URL."""
     target = next if next.startswith("/") and not next.startswith("//") else "/admin"
-    user = public_user(token) if token else None
-    if token and user:
+    user = public_user(access_token) if access_token else None
+    if access_token and user:
         response = RedirectResponse(target, status_code=303)
         set_cookie(
             response,
             request,
-            token,
+            access_token,
             refresh_token or request.cookies.get(REFRESH_COOKIE, ""),
         )
         set_session(response, user)
@@ -903,7 +904,7 @@ def auth_session(
             )
             set_session(response, user)
             return response
-    if token:
+    if access_token:
         return RedirectResponse("/?session=error", status_code=303)
     return RedirectResponse("/login", status_code=303)
 
