@@ -129,3 +129,44 @@ def test_blog_session_handoff_is_post_only() -> None:
     routes = [route for route in blog_app.app.routes if getattr(route, "path", None) == "/auth/session"]
     assert len(routes) == 1
     assert routes[0].methods == {"POST"}
+
+def test_refresh_cache_reuses_rotated_pair_without_second_auth_call(monkeypatch) -> None:
+    blog_app._REFRESH_CACHE.clear()
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"access_token": "new-access", "refresh_token": "new-refresh"}
+
+    def fake_post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(blog_app.httpx, "post", fake_post)
+    first = blog_app.refresh_tokens("old-refresh")
+    second = blog_app.refresh_tokens("old-refresh")
+
+    assert first == second
+    assert first == {"access_token": "new-access", "refresh_token": "new-refresh"}
+    assert len(calls) == 1
+
+
+def test_refresh_cache_expires_entries_and_is_bounded(monkeypatch) -> None:
+    blog_app._REFRESH_CACHE.clear()
+    blog_app._REFRESH_CACHE["expired"] = (10.0, {"access_token": "a", "refresh_token": "b"})
+    blog_app._REFRESH_CACHE["oldest"] = (1000.0, {"access_token": "a", "refresh_token": "b"})
+    monkeypatch.setattr(blog_app, "_REFRESH_CACHE_MAX_ENTRIES", 2)
+
+    blog_app._prune_refresh_cache(10.0)
+    assert "expired" not in blog_app._REFRESH_CACHE
+
+    blog_app._REFRESH_CACHE["newer"] = (1000.0, {"access_token": "a", "refresh_token": "b"})
+    blog_app._REFRESH_CACHE["newest"] = (1000.0, {"access_token": "a", "refresh_token": "b"})
+    blog_app._prune_refresh_cache(20.0)
+
+    assert len(blog_app._REFRESH_CACHE) == 2
+    assert "oldest" not in blog_app._REFRESH_CACHE
+    blog_app._REFRESH_CACHE.clear()
