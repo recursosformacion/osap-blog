@@ -415,11 +415,13 @@ def refresh_tokens(refresh_token: str) -> dict[str, Any] | None:
     """Renueva una vez por proceso y comparte brevemente el resultado rotado."""
     if not refresh_token:
         return None
-    now = time.monotonic()
     with _REFRESH_LOCK:
+        # Read the clock only after acquiring the lock. A caller may have waited
+        # behind another refresh long enough for an earlier cache entry to expire.
+        now = time.monotonic()
         _prune_refresh_cache(now)
         cached = _REFRESH_CACHE.get(refresh_token)
-        if cached:
+        if cached and cached[0] > now:
             return cached[1]
         try:
             response = httpx.post(
