@@ -68,16 +68,16 @@ En desarrollo se puede usar el venv de `osap-api`; el aplicativo no importa su c
 
 ## Acceso y autenticación
 
-El blog solo usa OSAP como proveedor de identidad. Para abrir el panel:
+El blog solo usa OSAP como proveedor de identidad. Para abrir el panel, OSAP envía el access
+token y, cuando existe, el refresh token al endpoint `POST /auth/session` en el cuerpo de un
+formulario. Las credenciales nunca se incluyen en la URL, el historial de navegación ni la
+cabecera Referer. El endpoint GET no acepta handoffs.
 
-```text
-http://osap-blog/auth/session?token=<access_token_de_OSAP>&next=/admin
-```
-
-Eso deja una cookie `HttpOnly` de una hora. Los comentarios usan la misma sesión. La entrada
-desde OSAP usa `?auth=login&return_to=blog`: tras autenticarse, OSAP transfiere el token al
-blog y abre `/admin`. El handoff OIDC completo queda pendiente: ahora el token se pasa en la
-URL de entrada.
+El blog valida el access token contra `/auth/me` y establece cookies `HttpOnly`. La cookie de
+sesión firmada no concede permisos por sí sola: el usuario y sus roles se vuelven a validar con
+Auth en cada petición. Así, una revocación o un cambio de rol no queda oculto hasta que caduque
+una copia local de siete días. Los comentarios usan la misma sesión. El flujo OIDC completo
+sigue pendiente.
 
 `config.yaml`:
 
