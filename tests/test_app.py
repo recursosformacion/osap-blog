@@ -1,7 +1,9 @@
 from io import BytesIO
 
 from PIL import Image
+from starlette.requests import Request
 
+import app as blog_app
 from app import faq_schema_json, optimize_image, sanitize_html, slugify
 
 
@@ -59,3 +61,65 @@ def test_image_optimizer_converts_jpeg_to_webp() -> None:
 
 def test_slugify() -> None:
     assert slugify("Canción de prueba, número 1") == "cancion-de-prueba-numero-1"
+
+
+def _request_with_cookies(cookie: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/admin",
+            "headers": [(b"cookie", cookie.encode("latin-1"))],
+            "query_string": b"",
+            "scheme": "https",
+            "server": ("testserver", 443),
+            "client": ("testclient", 1234),
+        }
+    )
+
+
+def test_editor_access_fails_closed_when_role_allowlist_is_empty(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "EDITOR_ROLES", [])
+    assert not blog_app.can_edit({"user_id": "user-1", "roles": ["admin"]})
+
+
+def test_editor_access_requires_an_allowed_role(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "EDITOR_ROLES", ["editor", "blog_admin"])
+    assert blog_app.can_edit({"user_id": "user-1", "roles": ["editor"]})
+    assert not blog_app.can_edit({"user_id": "user-1", "roles": ["member"]})
+
+
+def test_session_user_uses_fresh_auth_roles_not_cached_cookie_roles(monkeypatch) -> None:
+    cached_user = {"user_id": "user-1", "roles": ["admin"]}
+    signed_session = blog_app._session_payload(cached_user)
+    request = _request_with_cookies(
+        f"{blog_app.SESSION_COOKIE}={signed_session}; "
+        f"{blog_app.COOKIE}=valid-access-token"
+    )
+    monkeypatch.setattr(
+        blog_app,
+        "public_user",
+        lambda token: (
+            {"user_id": "user-1", "roles": ["member"]}
+            if token == "valid-access-token"
+            else None
+        ),
+    )
+
+    user = blog_app.session_user(request)
+
+    assert user is not None
+    assert user["roles"] == ["member"]
+
+
+def test_session_user_rejects_revoked_or_invalid_access_token(monkeypatch) -> None:
+    signed_session = blog_app._session_payload(
+        {"user_id": "user-1", "roles": ["admin"]}
+    )
+    request = _request_with_cookies(
+        f"{blog_app.SESSION_COOKIE}={signed_session}; "
+        f"{blog_app.COOKIE}=revoked-access-token"
+    )
+    monkeypatch.setattr(blog_app, "public_user", lambda _token: None)
+
+    assert blog_app.session_user(request) is None
