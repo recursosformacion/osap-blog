@@ -183,7 +183,7 @@ def test_auth_session_rejects_missing_or_untrusted_origin(monkeypatch) -> None:
 
     monkeypatch.setattr(blog_app, "public_user", unexpected_auth_call)
 
-    for origin in (None, "https://attacker.example", "http://osap.example"):
+    for origin in (None, "https://attacker.example", "http://osap.example", "https://[invalid"):
         try:
             blog_app.auth_session(
                 _request_with_cookies("", origin),
