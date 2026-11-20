@@ -427,8 +427,9 @@ def refresh_tokens(refresh_token: str) -> dict[str, Any] | None:
 def can_edit(user: dict[str, Any] | None) -> bool:
     if not user:
         return False
+    # Fail closed: an empty role allow-list must never grant editorial access.
     if not EDITOR_ROLES:
-        return True
+        return False
     roles = {str(role) for role in (user.get("roles") or [])}
     return bool(roles & set(EDITOR_ROLES))
 
@@ -498,7 +499,16 @@ def session_user(request: Request) -> dict[str, Any] | None:
     if not isinstance(data, dict) or int(data.get("exp", 0)) < int(time.time()):
         return None
     user = data.get("user")
-    return user if isinstance(user, dict) and user.get("user_id") else None
+    if not isinstance(user, dict) or not user.get("user_id"):
+        return None
+
+    # The signed cookie is only a short-lived session hint, never an authority
+    # for roles or account status. Revalidate the access token with Auth on
+    # every request so role changes and revoked sessions take effect promptly.
+    fresh_user = public_user(token_for(request))
+    if not fresh_user or str(fresh_user.get("user_id")) != str(user["user_id"]):
+        return None
+    return fresh_user
 
 
 def set_session(response: Response, user: dict[str, Any]) -> None:
