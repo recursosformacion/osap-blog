@@ -474,6 +474,35 @@ def _safe_local_redirect(value: str, default: str) -> str:
         return default
     return value
 
+def _safe_logout_redirect(value: str, default: str = "/") -> str:
+    """Allow local paths or the exact home URL of a configured OSAP origin."""
+    local = _safe_local_redirect(value, default)
+    if local != default or value == default:
+        return local
+
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return default
+
+    for configured_url in (OSAP_URL, PUBLIC_URL):
+        configured = urlparse(configured_url)
+        if (
+            configured.scheme in {"http", "https"}
+            and configured.netloc
+            and parsed.scheme == configured.scheme
+            and parsed.netloc == configured.netloc
+        ):
+            return f"{parsed.scheme}://{parsed.netloc}/"
+    return default
+
 
 def token_for(request: Request) -> str:
     return getattr(request.state, "blog_token", "") or request.cookies.get(COOKIE, "")
@@ -962,19 +991,7 @@ def login_page(request: Request, error: str = "") -> HTMLResponse:
 
 @app.get("/logout")
 def logout(request: Request, next: str = "/") -> RedirectResponse:
-    target = _safe_local_redirect(next, "/")
-    if target == "/" and next != "/":
-        parsed = urlparse(next)
-        allowed = {urlparse(OSAP_URL).netloc, urlparse(PUBLIC_URL).netloc}
-        if (
-            "\\" not in next
-            and not any(ord(char) < 0x20 or ord(char) == 0x7F for char in next)
-            and parsed.scheme in {"http", "https"}
-            and parsed.netloc in allowed
-            and not parsed.username
-            and not parsed.password
-        ):
-            target = next
+    target = _safe_logout_redirect(next, "/")
     response = RedirectResponse(target, status_code=303)
     response.delete_cookie(COOKIE, path="/")
     response.delete_cookie(REFRESH_COOKIE, path="/")
