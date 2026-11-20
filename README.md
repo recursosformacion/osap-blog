@@ -70,8 +70,9 @@ En desarrollo se puede usar el venv de `osap-api`; el aplicativo no importa su c
 
 El blog solo usa OSAP como proveedor de identidad. Para abrir el panel, OSAP envía el access
 token y, cuando existe, el refresh token al endpoint `POST /auth/session` en el cuerpo de un
-formulario. Las credenciales nunca se incluyen en la URL, el historial de navegación ni la
-cabecera Referer. El endpoint GET no acepta handoffs.
+formulario. El endpoint solo acepta peticiones cuyo encabezado `Origin` coincide con el origen
+público configurado de OSAP. Las credenciales nunca se incluyen en la URL, el historial de
+navegación ni la cabecera Referer. El endpoint GET no acepta handoffs.
 
 El blog valida el access token contra `/auth/me` y establece cookies `HttpOnly`. La cookie de
 sesión firmada no concede permisos por sí sola: el usuario y sus roles se vuelven a validar con
