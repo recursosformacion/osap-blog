@@ -389,18 +389,37 @@ def public_user(token: str) -> dict[str, Any] | None:
     return data if data.get("user_id") else None
 
 
+# Auth invalida todas las sesiones si detecta la reutilización de un refresh ya rotado.
+# Esta caché hace que las peticiones concurrentes del único proceso Blog compartan
+# el mismo resultado de rotación. No es un mecanismo distribuido: producción debe
+# mantener una sola instancia/worker (véase deploy/osap-blog.service).
+_REFRESH_CACHE_TTL_SECONDS = 60.0
+_REFRESH_CACHE_MAX_ENTRIES = 1024
 _REFRESH_LOCK = threading.Lock()
 _REFRESH_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
+def _prune_refresh_cache(now: float) -> None:
+    """Expira resultados antiguos y limita el crecimiento de la caché en memoria."""
+    expired = [
+        token for token, (expires_at, _) in _REFRESH_CACHE.items()
+        if expires_at <= now
+    ]
+    for token in expired:
+        _REFRESH_CACHE.pop(token, None)
+    while len(_REFRESH_CACHE) > _REFRESH_CACHE_MAX_ENTRIES:
+        _REFRESH_CACHE.pop(next(iter(_REFRESH_CACHE)))
+
+
 def refresh_tokens(refresh_token: str) -> dict[str, Any] | None:
-    """Renueva la sesión en OSAP y reutiliza el resultado durante unos segundos."""
+    """Renueva una vez por proceso y comparte brevemente el resultado rotado."""
     if not refresh_token:
         return None
     now = time.monotonic()
     with _REFRESH_LOCK:
+        _prune_refresh_cache(now)
         cached = _REFRESH_CACHE.get(refresh_token)
-        if cached and cached[0] > now:
+        if cached:
             return cached[1]
         try:
             response = httpx.post(
@@ -420,7 +439,11 @@ def refresh_tokens(refresh_token: str) -> dict[str, Any] | None:
             return None
         if not data.get("access_token") or not data.get("refresh_token"):
             return None
-        _REFRESH_CACHE[refresh_token] = (now + 60.0, data)
+        _REFRESH_CACHE[refresh_token] = (
+            time.monotonic() + _REFRESH_CACHE_TTL_SECONDS,
+            data,
+        )
+        _prune_refresh_cache(time.monotonic())
         return data
 
 
