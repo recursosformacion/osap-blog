@@ -123,3 +123,9 @@ def test_session_user_rejects_revoked_or_invalid_access_token(monkeypatch) -> No
     monkeypatch.setattr(blog_app, "public_user", lambda _token: None)
 
     assert blog_app.session_user(request) is None
+
+
+def test_blog_session_handoff_is_post_only() -> None:
+    routes = [route for route in blog_app.app.routes if getattr(route, "path", None) == "/auth/session"]
+    assert len(routes) == 1
+    assert routes[0].methods == {"POST"}
