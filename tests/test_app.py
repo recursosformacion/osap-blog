@@ -180,6 +180,42 @@ def test_logout_rejects_backslash_open_redirect() -> None:
     assert response.headers["location"] == "/"
 
 
+def test_logout_allows_only_configured_osap_home(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+    monkeypatch.setattr(blog_app, "PUBLIC_URL", "https://blog.example")
+
+    response = blog_app.logout(
+        _request_with_cookies(""),
+        next="https://osap.example/",
+    )
+
+    assert response.headers["location"] == "https://osap.example/"
+
+
+def test_logout_rejects_non_root_path_on_configured_origin(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+    monkeypatch.setattr(blog_app, "PUBLIC_URL", "https://blog.example")
+
+    response = blog_app.logout(
+        _request_with_cookies(""),
+        next="https://osap.example/account?continue=/admin",
+    )
+
+    assert response.headers["location"] == "/"
+
+
+def test_logout_rejects_unconfigured_absolute_origin(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+    monkeypatch.setattr(blog_app, "PUBLIC_URL", "https://blog.example")
+
+    response = blog_app.logout(
+        _request_with_cookies(""),
+        next="https://attacker.example/",
+    )
+
+    assert response.headers["location"] == "/"
+
+
 def test_refresh_cache_does_not_reuse_expired_entry(monkeypatch) -> None:
     blog_app._REFRESH_CACHE.clear()
     blog_app._REFRESH_CACHE["old-refresh"] = (
