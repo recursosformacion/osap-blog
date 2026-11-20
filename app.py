@@ -459,6 +459,22 @@ def can_edit(user: dict[str, Any] | None) -> bool:
     return bool(roles & set(EDITOR_ROLES))
 
 
+def _safe_local_redirect(value: str, default: str) -> str:
+    """Accept only an unambiguous same-origin path for browser redirects."""
+    if (
+        not value
+        or not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or any(ord(char) < 0x20 or ord(char) == 0x7F for char in value)
+    ):
+        return default
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        return default
+    return value
+
+
 def token_for(request: Request) -> str:
     return getattr(request.state, "blog_token", "") or request.cookies.get(COOKIE, "")
 
@@ -900,7 +916,7 @@ def auth_session(
     next: str = Form(default="/admin"),
 ) -> RedirectResponse:
     """Accept the OSAP session handoff in a POST body, never in a URL."""
-    target = next if next.startswith("/") and not next.startswith("//") else "/admin"
+    target = _safe_local_redirect(next, "/admin")
     user = public_user(access_token) if access_token else None
     if access_token and user:
         response = RedirectResponse(target, status_code=303)
@@ -946,13 +962,18 @@ def login_page(request: Request, error: str = "") -> HTMLResponse:
 
 @app.get("/logout")
 def logout(request: Request, next: str = "/") -> RedirectResponse:
-    target = "/"
-    if next.startswith("/") and not next.startswith("//"):
-        target = next
-    else:
+    target = _safe_local_redirect(next, "/")
+    if target == "/" and next != "/":
         parsed = urlparse(next)
         allowed = {urlparse(OSAP_URL).netloc, urlparse(PUBLIC_URL).netloc}
-        if parsed.scheme in {"http", "https"} and parsed.netloc in allowed:
+        if (
+            "\\" not in next
+            and not any(ord(char) < 0x20 or ord(char) == 0x7F for char in next)
+            and parsed.scheme in {"http", "https"}
+            and parsed.netloc in allowed
+            and not parsed.username
+            and not parsed.password
+        ):
             target = next
     response = RedirectResponse(target, status_code=303)
     response.delete_cookie(COOKIE, path="/")
