@@ -76,8 +76,17 @@ cabecera Referer. El endpoint GET no acepta handoffs.
 El blog valida el access token contra `/auth/me` y establece cookies `HttpOnly`. La cookie de
 sesión firmada no concede permisos por sí sola: el usuario y sus roles se vuelven a validar con
 Auth en cada petición. Así, una revocación o un cambio de rol no queda oculto hasta que caduque
-una copia local de siete días. Los comentarios usan la misma sesión. El flujo OIDC completo
-sigue pendiente.
+una copia local de siete días. Los comentarios usan la misma sesión.
+
+La renovación de refresh tokens tiene una caché breve en memoria para que las peticiones
+concurrentes del mismo proceso compartan el mismo par rotado. Como Auth revoca todas las
+sesiones ante la reutilización de un refresh consumido, esta coordinación **no es distribuida**:
+el servicio Blog debe ejecutarse con una sola instancia y un solo worker. El unit file incluido
+fija `uvicorn --workers 1`; no escalar horizontalmente ni añadir workers sin sustituir esta
+coordinación por un mecanismo compartido y atómico. La caché está limitada a 1024 entradas y
+expira los resultados tras 60 segundos.
+
+El flujo OIDC completo sigue pendiente.
 
 `config.yaml`:
 
