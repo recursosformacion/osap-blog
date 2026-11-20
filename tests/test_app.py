@@ -63,13 +63,16 @@ def test_slugify() -> None:
     assert slugify("Canción de prueba, número 1") == "cancion-de-prueba-numero-1"
 
 
-def _request_with_cookies(cookie: str) -> Request:
+def _request_with_cookies(cookie: str, origin: str | None = None) -> Request:
+    headers = [(b"cookie", cookie.encode("latin-1"))]
+    if origin:
+        headers.append((b"origin", origin.encode("latin-1")))
     return Request(
         {
             "type": "http",
             "method": "GET",
             "path": "/admin",
-            "headers": [(b"cookie", cookie.encode("latin-1"))],
+            "headers": headers,
             "query_string": b"",
             "scheme": "https",
             "server": ("testserver", 443),
@@ -155,6 +158,7 @@ def test_refresh_cache_reuses_rotated_pair_without_second_auth_call(monkeypatch)
 
 
 def test_auth_session_rejects_backslash_open_redirect(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
     monkeypatch.setattr(
         blog_app,
         "public_user",
@@ -162,13 +166,35 @@ def test_auth_session_rejects_backslash_open_redirect(monkeypatch) -> None:
     )
 
     response = blog_app.auth_session(
-        _request_with_cookies(""),
+        _request_with_cookies("", "https://osap.example"),
         access_token="valid-access-token",
         refresh_token="",
         next="/\\evil.example",
     )
 
     assert response.headers["location"] == "/admin"
+
+
+def test_auth_session_rejects_missing_or_untrusted_origin(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+
+    def unexpected_auth_call(_token):
+        raise AssertionError("Auth must not be called for an untrusted handoff origin")
+
+    monkeypatch.setattr(blog_app, "public_user", unexpected_auth_call)
+
+    for origin in (None, "https://attacker.example", "http://osap.example"):
+        try:
+            blog_app.auth_session(
+                _request_with_cookies("", origin),
+                access_token="attacker-token",
+                refresh_token="",
+                next="/admin",
+            )
+        except blog_app.HTTPException as exc:
+            assert exc.status_code == 403
+        else:
+            raise AssertionError(f"Expected 403 for origin {origin!r}")
 
 
 def test_logout_rejects_backslash_open_redirect() -> None:
