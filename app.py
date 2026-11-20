@@ -940,27 +940,29 @@ def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLR
 def _is_osap_handoff_origin(request: Request) -> bool:
     """Allow session handoff only from the configured public OSAP origin."""
     origin = request.headers.get("origin", "").strip()
-    configured = urlparse(OSAP_URL)
-    supplied = urlparse(origin)
+    try:
+        configured = urlparse(OSAP_URL)
+        supplied = urlparse(origin)
+        supplied_hostname = supplied.hostname
+        configured_hostname = configured.hostname
+        supplied_port = supplied.port
+        configured_port = configured.port
+    except ValueError:
+        return False
     if (
         not origin
         or supplied.scheme not in {"http", "https"}
-        or not supplied.hostname
+        or not supplied_hostname
         or supplied.username
         or supplied.password
         or supplied.path not in {"", "/"}
         or supplied.query
         or supplied.fragment
         or configured.scheme not in {"http", "https"}
-        or not configured.hostname
+        or not configured_hostname
         or configured.username
         or configured.password
     ):
-        return False
-    try:
-        supplied_port = supplied.port
-        configured_port = configured.port
-    except ValueError:
         return False
     supplied_port = supplied_port or (443 if supplied.scheme == "https" else 80)
     configured_port = configured_port or (443 if configured.scheme == "https" else 80)
