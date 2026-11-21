@@ -1,7 +1,9 @@
 from io import BytesIO
 
 from PIL import Image
+from starlette.requests import Request
 
+import app as blog_app
 from app import faq_schema_json, optimize_image, sanitize_html, slugify
 
 
@@ -59,3 +61,229 @@ def test_image_optimizer_converts_jpeg_to_webp() -> None:
 
 def test_slugify() -> None:
     assert slugify("Canción de prueba, número 1") == "cancion-de-prueba-numero-1"
+
+
+def _request_with_cookies(cookie: str, origin: str | None = None) -> Request:
+    headers = [(b"cookie", cookie.encode("latin-1"))]
+    if origin:
+        headers.append((b"origin", origin.encode("latin-1")))
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/admin",
+            "headers": headers,
+            "query_string": b"",
+            "scheme": "https",
+            "server": ("testserver", 443),
+            "client": ("testclient", 1234),
+        }
+    )
+
+
+def test_editor_access_fails_closed_when_role_allowlist_is_empty(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "EDITOR_ROLES", [])
+    assert not blog_app.can_edit({"user_id": "user-1", "roles": ["admin"]})
+
+
+def test_editor_access_requires_an_allowed_role(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "EDITOR_ROLES", ["editor", "blog_admin"])
+    assert blog_app.can_edit({"user_id": "user-1", "roles": ["editor"]})
+    assert not blog_app.can_edit({"user_id": "user-1", "roles": ["member"]})
+
+
+def test_session_user_uses_fresh_auth_roles_not_cached_cookie_roles(monkeypatch) -> None:
+    cached_user = {"user_id": "user-1", "roles": ["admin"]}
+    signed_session = blog_app._session_payload(cached_user)
+    request = _request_with_cookies(
+        f"{blog_app.SESSION_COOKIE}={signed_session}; "
+        f"{blog_app.COOKIE}=valid-access-token"
+    )
+    monkeypatch.setattr(
+        blog_app,
+        "public_user",
+        lambda token: (
+            {"user_id": "user-1", "roles": ["member"]}
+            if token == "valid-access-token"
+            else None
+        ),
+    )
+
+    user = blog_app.session_user(request)
+
+    assert user is not None
+    assert user["roles"] == ["member"]
+
+
+def test_session_user_rejects_revoked_or_invalid_access_token(monkeypatch) -> None:
+    signed_session = blog_app._session_payload(
+        {"user_id": "user-1", "roles": ["admin"]}
+    )
+    request = _request_with_cookies(
+        f"{blog_app.SESSION_COOKIE}={signed_session}; "
+        f"{blog_app.COOKIE}=revoked-access-token"
+    )
+    monkeypatch.setattr(blog_app, "public_user", lambda _token: None)
+
+    assert blog_app.session_user(request) is None
+
+
+def test_blog_session_handoff_is_post_only() -> None:
+    routes = [route for route in blog_app.app.routes if getattr(route, "path", None) == "/auth/session"]
+    assert len(routes) == 1
+    assert routes[0].methods == {"POST"}
+
+def test_refresh_cache_reuses_rotated_pair_without_second_auth_call(monkeypatch) -> None:
+    blog_app._REFRESH_CACHE.clear()
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"access_token": "new-access", "refresh_token": "new-refresh"}
+
+    def fake_post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(blog_app.httpx, "post", fake_post)
+    first = blog_app.refresh_tokens("old-refresh")
+    second = blog_app.refresh_tokens("old-refresh")
+
+    assert first == second
+    assert first == {"access_token": "new-access", "refresh_token": "new-refresh"}
+    assert len(calls) == 1
+
+
+def test_auth_session_rejects_backslash_open_redirect(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+    monkeypatch.setattr(
+        blog_app,
+        "public_user",
+        lambda _token: {"user_id": "user-1", "roles": ["admin"]},
+    )
+
+    response = blog_app.auth_session(
+        _request_with_cookies("", "https://osap.example"),
+        access_token="valid-access-token",
+        refresh_token="",
+        next="/\\evil.example",
+    )
+
+    assert response.headers["location"] == "/admin"
+
+
+def test_auth_session_rejects_missing_or_untrusted_origin(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+
+    def unexpected_auth_call(_token):
+        raise AssertionError("Auth must not be called for an untrusted handoff origin")
+
+    monkeypatch.setattr(blog_app, "public_user", unexpected_auth_call)
+
+    for origin in (None, "https://attacker.example", "http://osap.example", "https://[invalid"):
+        try:
+            blog_app.auth_session(
+                _request_with_cookies("", origin),
+                access_token="attacker-token",
+                refresh_token="",
+                next="/admin",
+            )
+        except blog_app.HTTPException as exc:
+            assert exc.status_code == 403
+        else:
+            raise AssertionError(f"Expected 403 for origin {origin!r}")
+
+
+def test_logout_rejects_backslash_open_redirect() -> None:
+    response = blog_app.logout(
+        _request_with_cookies(""),
+        next="/\\evil.example",
+    )
+
+    assert response.headers["location"] == "/"
+
+
+def test_logout_allows_only_configured_osap_home(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+    monkeypatch.setattr(blog_app, "PUBLIC_URL", "https://blog.example")
+
+    response = blog_app.logout(
+        _request_with_cookies(""),
+        next="https://osap.example/",
+    )
+
+    assert response.headers["location"] == "https://osap.example/"
+
+
+def test_logout_rejects_non_root_path_on_configured_origin(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+    monkeypatch.setattr(blog_app, "PUBLIC_URL", "https://blog.example")
+
+    response = blog_app.logout(
+        _request_with_cookies(""),
+        next="https://osap.example/account?continue=/admin",
+    )
+
+    assert response.headers["location"] == "/"
+
+
+def test_logout_rejects_unconfigured_absolute_origin(monkeypatch) -> None:
+    monkeypatch.setattr(blog_app, "OSAP_URL", "https://osap.example")
+    monkeypatch.setattr(blog_app, "PUBLIC_URL", "https://blog.example")
+
+    response = blog_app.logout(
+        _request_with_cookies(""),
+        next="https://attacker.example/",
+    )
+
+    assert response.headers["location"] == "/"
+
+
+def test_refresh_cache_does_not_reuse_expired_entry(monkeypatch) -> None:
+    blog_app._REFRESH_CACHE.clear()
+    blog_app._REFRESH_CACHE["old-refresh"] = (
+        10.0,
+        {"access_token": "expired-access", "refresh_token": "expired-refresh"},
+    )
+    calls = []
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"access_token": "new-access", "refresh_token": "new-refresh"}
+
+    def fake_post(*args, **kwargs):
+        calls.append((args, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr(blog_app.time, "monotonic", lambda: 20.0)
+    monkeypatch.setattr(blog_app.httpx, "post", fake_post)
+
+    result = blog_app.refresh_tokens("old-refresh")
+
+    assert result == {"access_token": "new-access", "refresh_token": "new-refresh"}
+    assert len(calls) == 1
+    blog_app._REFRESH_CACHE.clear()
+
+
+def test_refresh_cache_expires_entries_and_is_bounded(monkeypatch) -> None:
+    blog_app._REFRESH_CACHE.clear()
+    blog_app._REFRESH_CACHE["expired"] = (10.0, {"access_token": "a", "refresh_token": "b"})
+    blog_app._REFRESH_CACHE["oldest"] = (1000.0, {"access_token": "a", "refresh_token": "b"})
+    monkeypatch.setattr(blog_app, "_REFRESH_CACHE_MAX_ENTRIES", 2)
+
+    blog_app._prune_refresh_cache(10.0)
+    assert "expired" not in blog_app._REFRESH_CACHE
+
+    blog_app._REFRESH_CACHE["newer"] = (1000.0, {"access_token": "a", "refresh_token": "b"})
+    blog_app._REFRESH_CACHE["newest"] = (1000.0, {"access_token": "a", "refresh_token": "b"})
+    blog_app._prune_refresh_cache(20.0)
+
+    assert len(blog_app._REFRESH_CACHE) == 2
+    assert "oldest" not in blog_app._REFRESH_CACHE
+    blog_app._REFRESH_CACHE.clear()

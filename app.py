@@ -389,16 +389,37 @@ def public_user(token: str) -> dict[str, Any] | None:
     return data if data.get("user_id") else None
 
 
+# Auth invalida todas las sesiones si detecta la reutilización de un refresh ya rotado.
+# Esta caché hace que las peticiones concurrentes del único proceso Blog compartan
+# el mismo resultado de rotación. No es un mecanismo distribuido: producción debe
+# mantener una sola instancia/worker (véase deploy/osap-blog.service).
+_REFRESH_CACHE_TTL_SECONDS = 60.0
+_REFRESH_CACHE_MAX_ENTRIES = 1024
 _REFRESH_LOCK = threading.Lock()
 _REFRESH_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
+def _prune_refresh_cache(now: float) -> None:
+    """Expira resultados antiguos y limita el crecimiento de la caché en memoria."""
+    expired = [
+        token for token, (expires_at, _) in _REFRESH_CACHE.items()
+        if expires_at <= now
+    ]
+    for token in expired:
+        _REFRESH_CACHE.pop(token, None)
+    while len(_REFRESH_CACHE) > _REFRESH_CACHE_MAX_ENTRIES:
+        _REFRESH_CACHE.pop(next(iter(_REFRESH_CACHE)))
+
+
 def refresh_tokens(refresh_token: str) -> dict[str, Any] | None:
-    """Renueva la sesión en OSAP y reutiliza el resultado durante unos segundos."""
+    """Renueva una vez por proceso y comparte brevemente el resultado rotado."""
     if not refresh_token:
         return None
-    now = time.monotonic()
     with _REFRESH_LOCK:
+        # Read the clock only after acquiring the lock. A caller may have waited
+        # behind another refresh long enough for an earlier cache entry to expire.
+        now = time.monotonic()
+        _prune_refresh_cache(now)
         cached = _REFRESH_CACHE.get(refresh_token)
         if cached and cached[0] > now:
             return cached[1]
@@ -420,17 +441,67 @@ def refresh_tokens(refresh_token: str) -> dict[str, Any] | None:
             return None
         if not data.get("access_token") or not data.get("refresh_token"):
             return None
-        _REFRESH_CACHE[refresh_token] = (now + 60.0, data)
+        _REFRESH_CACHE[refresh_token] = (
+            time.monotonic() + _REFRESH_CACHE_TTL_SECONDS,
+            data,
+        )
+        _prune_refresh_cache(time.monotonic())
         return data
 
 
 def can_edit(user: dict[str, Any] | None) -> bool:
     if not user:
         return False
+    # Fail closed: an empty role allow-list must never grant editorial access.
     if not EDITOR_ROLES:
-        return True
+        return False
     roles = {str(role) for role in (user.get("roles") or [])}
     return bool(roles & set(EDITOR_ROLES))
+
+
+def _safe_local_redirect(value: str, default: str) -> str:
+    """Accept only an unambiguous same-origin path for browser redirects."""
+    if (
+        not value
+        or not value.startswith("/")
+        or value.startswith("//")
+        or "\\" in value
+        or any(ord(char) < 0x20 or ord(char) == 0x7F for char in value)
+    ):
+        return default
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        return default
+    return value
+
+def _safe_logout_redirect(value: str, default: str = "/") -> str:
+    """Allow local paths or the exact home URL of a configured OSAP origin."""
+    local = _safe_local_redirect(value, default)
+    if local != default or value == default:
+        return local
+
+    parsed = urlparse(value)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+    ):
+        return default
+
+    for configured_url in (OSAP_URL, PUBLIC_URL):
+        configured = urlparse(configured_url)
+        if (
+            configured.scheme in {"http", "https"}
+            and configured.netloc
+            and parsed.scheme == configured.scheme
+            and parsed.netloc == configured.netloc
+        ):
+            return f"{parsed.scheme}://{parsed.netloc}/"
+    return default
 
 
 def token_for(request: Request) -> str:
@@ -498,7 +569,16 @@ def session_user(request: Request) -> dict[str, Any] | None:
     if not isinstance(data, dict) or int(data.get("exp", 0)) < int(time.time()):
         return None
     user = data.get("user")
-    return user if isinstance(user, dict) and user.get("user_id") else None
+    if not isinstance(user, dict) or not user.get("user_id"):
+        return None
+
+    # The signed cookie is only a short-lived session hint, never an authority
+    # for roles or account status. Revalidate the access token with Auth on
+    # every request so role changes and revoked sessions take effect promptly.
+    fresh_user = public_user(token_for(request))
+    if not fresh_user or str(fresh_user.get("user_id")) != str(user["user_id"]):
+        return None
+    return fresh_user
 
 
 def set_session(response: Response, user: dict[str, Any]) -> None:
@@ -857,21 +937,60 @@ def article_page(request: Request, slug: str, comment_status: str = "") -> HTMLR
     )
 
 
-@app.get("/auth/session")
+def _is_osap_handoff_origin(request: Request) -> bool:
+    """Allow session handoff only from the configured public OSAP origin."""
+    origin = request.headers.get("origin", "").strip()
+    try:
+        configured = urlparse(OSAP_URL)
+        supplied = urlparse(origin)
+        supplied_hostname = supplied.hostname
+        configured_hostname = configured.hostname
+        supplied_port = supplied.port
+        configured_port = configured.port
+    except ValueError:
+        return False
+    if (
+        not origin
+        or supplied.scheme not in {"http", "https"}
+        or not supplied_hostname
+        or supplied.username
+        or supplied.password
+        or supplied.path not in {"", "/"}
+        or supplied.query
+        or supplied.fragment
+        or configured.scheme not in {"http", "https"}
+        or not configured_hostname
+        or configured.username
+        or configured.password
+    ):
+        return False
+    supplied_port = supplied_port or (443 if supplied.scheme == "https" else 80)
+    configured_port = configured_port or (443 if configured.scheme == "https" else 80)
+    return (
+        supplied.scheme.lower() == configured.scheme.lower()
+        and supplied.hostname.lower() == configured.hostname.lower()
+        and supplied_port == configured_port
+    )
+
+
+@app.post("/auth/session")
 def auth_session(
     request: Request,
-    token: str = "",
-    refresh_token: str = "",
-    next: str = "/admin",
+    access_token: str = Form(default=""),
+    refresh_token: str = Form(default=""),
+    next: str = Form(default="/admin"),
 ) -> RedirectResponse:
-    target = next if next.startswith("/") and not next.startswith("//") else "/admin"
-    user = public_user(token) if token else None
-    if token and user:
+    """Accept the OSAP session handoff in a POST body, never in a URL."""
+    if not _is_osap_handoff_origin(request):
+        raise HTTPException(status_code=403, detail="Origen de handoff no autorizado")
+    target = _safe_local_redirect(next, "/admin")
+    user = public_user(access_token) if access_token else None
+    if access_token and user:
         response = RedirectResponse(target, status_code=303)
         set_cookie(
             response,
             request,
-            token,
+            access_token,
             refresh_token or request.cookies.get(REFRESH_COOKIE, ""),
         )
         set_session(response, user)
@@ -893,7 +1012,7 @@ def auth_session(
             )
             set_session(response, user)
             return response
-    if token:
+    if access_token:
         return RedirectResponse("/?session=error", status_code=303)
     return RedirectResponse("/login", status_code=303)
 
@@ -910,14 +1029,7 @@ def login_page(request: Request, error: str = "") -> HTMLResponse:
 
 @app.get("/logout")
 def logout(request: Request, next: str = "/") -> RedirectResponse:
-    target = "/"
-    if next.startswith("/") and not next.startswith("//"):
-        target = next
-    else:
-        parsed = urlparse(next)
-        allowed = {urlparse(OSAP_URL).netloc, urlparse(PUBLIC_URL).netloc}
-        if parsed.scheme in {"http", "https"} and parsed.netloc in allowed:
-            target = next
+    target = _safe_logout_redirect(next, "/")
     response = RedirectResponse(target, status_code=303)
     response.delete_cookie(COOKIE, path="/")
     response.delete_cookie(REFRESH_COOKIE, path="/")

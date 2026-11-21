@@ -68,21 +68,31 @@ En desarrollo se puede usar el venv de `osap-api`; el aplicativo no importa su c
 
 ## Acceso y autenticación
 
-El blog solo usa OSAP como proveedor de identidad. Para abrir el panel:
+El blog solo usa OSAP como proveedor de identidad. Para abrir el panel, OSAP envía el access
+token y, cuando existe, el refresh token al endpoint `POST /auth/session` en el cuerpo de un
+formulario. El endpoint solo acepta peticiones cuyo encabezado `Origin` coincide con el origen
+público configurado de OSAP. Las credenciales nunca se incluyen en la URL, el historial de
+navegación ni la cabecera Referer. El endpoint GET no acepta handoffs.
 
-```text
-http://osap-blog/auth/session?token=<access_token_de_OSAP>&next=/admin
-```
+El blog valida el access token contra `/auth/me` y establece cookies `HttpOnly`. La cookie de
+sesión firmada no concede permisos por sí sola: el usuario y sus roles se vuelven a validar con
+Auth en cada petición. Así, una revocación o un cambio de rol no queda oculto hasta que caduque
+una copia local de siete días. Los comentarios usan la misma sesión.
 
-Eso deja una cookie `HttpOnly` de una hora. Los comentarios usan la misma sesión. La entrada
-desde OSAP usa `?auth=login&return_to=blog`: tras autenticarse, OSAP transfiere el token al
-blog y abre `/admin`. El handoff OIDC completo queda pendiente: ahora el token se pasa en la
-URL de entrada.
+La renovación de refresh tokens tiene una caché breve en memoria para que las peticiones
+concurrentes del mismo proceso compartan el mismo par rotado. Como Auth revoca todas las
+sesiones ante la reutilización de un refresh consumido, esta coordinación **no es distribuida**:
+el servicio Blog debe ejecutarse con una sola instancia y un solo worker. El unit file incluido
+fija `uvicorn --workers 1`; no escalar horizontalmente ni añadir workers sin sustituir esta
+coordinación por un mecanismo compartido y atómico. La caché está limitada a 1024 entradas y
+expira los resultados tras 60 segundos.
+
+El flujo OIDC completo sigue pendiente.
 
 `config.yaml`:
 
-- `editor.roles: []` permite editar a cualquier usuario autenticado, útil en desarrollo.
-- En producción debe listar roles como `admin`, `editor` o `blog_admin`.
+- `editor.roles: []` deniega la edición a todos los usuarios (fallo seguro).
+- Para habilitar edición deben configurarse explícitamente roles como `admin`, `editor` o `blog_admin`.
 - `editor.moderation: true` deja los comentarios pendientes de aprobación.
 
 ## FAQ e imágenes
@@ -99,6 +109,7 @@ Las imágenes subidas o pegadas se convierten a WebP, se limitan a `media.max_di
 - `GET /feed` — RSS 2.0 de los últimos 20 artículos.
 - `GET /sitemap.xml`, `GET /robots.txt` — SEO.
 - `GET /blog/{slug}` — artículo y comentarios aprobados.
+- `POST /auth/session` — handoff de sesión de OSAP en el cuerpo del formulario.
 - `POST /comments` — comentario autenticado.
 - `GET /admin` — panel, artículos y moderación.
 - `GET /admin/new`, `GET /admin/{id}/edit` — editor.
