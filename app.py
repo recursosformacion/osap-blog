@@ -111,11 +111,18 @@ MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
 COOKIE = "osap_blog_token"
 REFRESH_COOKIE = "osap_blog_refresh"
 SESSION_COOKIE = "osap_blog_session"
-SESSION_SECRET = (
+_configured_session_secret = (
     os.environ.get("OSAP_BLOG_SESSION_SECRET")
     or CONFIG["server"].get("session_secret")
-    or secrets.token_hex(32)
+    or ""
 )
+# In production a random per-process fallback invalidates signed sessions on every
+# restart and breaks multi-worker consistency. Require a persistent secret explicitly.
+if PUBLIC_URL.startswith("https://") and not _configured_session_secret:
+    raise RuntimeError(
+        "OSAP_BLOG_SESSION_SECRET is required when OSAP_BLOG_PUBLIC_URL uses HTTPS"
+    )
+SESSION_SECRET = _configured_session_secret or secrets.token_hex(32)
 LOGGER = logging.getLogger("osap-blog")
 MAX_UPLOAD = int(CONFIG["media"].get("max_bytes", 5 * 1024 * 1024))
 IMAGE_MAX_DIMENSION = int(CONFIG["media"].get("max_dimension", 2000))
