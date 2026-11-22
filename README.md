@@ -39,7 +39,7 @@ directamente.
 | Servicio | `osap-blog.service` (uvicorn `127.0.0.1:8500`) |
 | Directorio | `/home/ocw/openmusicrepository.com/osap-blog` |
 | BD | `osap_blog` (usuario dedicado) |
-| Config | `config.yaml` sin contraseña; secreto en `/etc/openmusicrepository/osap-blog.env` (600) |
+| Config | `config.yaml` sin contraseña; `OSAP_BLOG_DB_PASSWORD` y `OSAP_BLOG_SESSION_SECRET` en `/etc/openmusicrepository/osap-blog.env` (600) |
 | Nginx | `/etc/nginx/sites-enabled/blog.openmusicrepository.com.conf` |
 | TLS | Let's Encrypt por DNS Cloudflare, renovación automática |
 | Migración | prod→prod desde `osap_api.amigos_articles` (`scope='general'`); 2 artículos |
@@ -47,6 +47,10 @@ directamente.
 El 29/10/2026 se migraron los dos artículos generales publicados de producción y sus
 portadas. El origen no se modificó. La copia previa de las tablas de artículos está en
 `/root/backups/osap-blog-source-20261029-162128.sql` en el servidor.
+
+`OSAP_BLOG_SESSION_SECRET` es obligatorio cuando `OSAP_BLOG_PUBLIC_URL` usa HTTPS. Debe
+ser una clave aleatoria persistente, compartida por todos los procesos; no usar un valor
+aleatorio generado al arrancar. El servicio systemd ya fija la URL pública HTTPS.
 
 ## Arranque local
 
