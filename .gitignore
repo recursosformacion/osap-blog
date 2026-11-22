@@ -5,3 +5,7 @@ __pycache__/
 *.pyc
 .venv/
 .env
+
+# Aider Studio (auto-added)
+REPO_MAP.md
+.aider/
